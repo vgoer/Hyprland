@@ -142,7 +142,7 @@ static std::string jsonify(SP<IValue> v) {
             x->name(), x->description(), x->defaultVal(), x->value());
     }
 
-    Log::logger->log(Log::ERR, "values/jsonify: invalid value {}", v->name());
+    LOG(Log::ERR, "values/jsonify: invalid value {}", v->name());
     return "{},";
 }
 
@@ -170,11 +170,13 @@ std::vector<SP<IValue>> Values::getConfigValues() {
         MS<CssGap>("general:gaps_out", "gaps between windows and monitor edges", 20, {.refresh = Supplementary::REFRESH_LAYOUTS}),
         MS<CssGap>("general:float_gaps", "gaps between windows and monitor edges for floating windows", 0, {.refresh = Supplementary::REFRESH_LAYOUTS}),
         MS<Int>("general:gaps_workspaces", "gaps between workspaces. Stacks with gaps_out.", 0, {.min = 0, .max = 100, .refresh = Supplementary::REFRESH_LAYOUTS}),
-        MS<Gradient>("general:col.inactive_border", "border color for inactive windows", CHyprColor{0xff444444}),
-        MS<Gradient>("general:col.active_border", "border color for the active window", CHyprColor{0xffffffff}),
-        MS<Gradient>("general:col.nogroup_border", "inactive border color for window that cannot be added to a group", CHyprColor{0xffffaaff}),
-        MS<Gradient>("general:col.nogroup_border_active", "active border color for window that cannot be added to a group", CHyprColor{0xffff00ff}),
-        MS<String>("general:layout", "which layout to use. [dwindle/master]", "dwindle", {.refresh = Supplementary::REFRESH_LAYOUTS}),
+        MS<Gradient>("general:col.inactive_border", "border color for inactive windows", CHyprColor{0xff444444}, {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Gradient>("general:col.active_border", "border color for the active window", CHyprColor{0xffffffff}, {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Gradient>("general:col.nogroup_border", "inactive border color for window that cannot be added to a group", CHyprColor{0xffffaaff},
+                     {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Gradient>("general:col.nogroup_border_active", "active border color for window that cannot be added to a group", CHyprColor{0xffff00ff},
+                     {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<String>("general:layout", "which layout to use. [dwindle/master/scrolling/monocle/lua:<name>]", "dwindle", {.refresh = Supplementary::REFRESH_LAYOUTS}),
         MS<Bool>("general:no_focus_fallback", "if true, will not fall back to the next available window when moving focus in a direction where no window was found", false),
         MS<Bool>("general:resize_on_border", "enables resizing windows by clicking and dragging on borders and gaps", false),
         MS<Int>("general:extend_border_grab_area", "extends the area around the border where you can click and drag on, only used when general:resize_on_border is on.", 15,
@@ -195,29 +197,37 @@ std::vector<SP<IValue>> Values::getConfigValues() {
          * decoration:
          */
 
-        MS<Int>("decoration:rounding", "rounded corners' radius (in layout px)", 0, {.min = 0, .max = 20}),
-        MS<Float>("decoration:rounding_power", "rounding power of corners (2 is a circle)", 2, {.min = 2, .max = 10}),
-        MS<Float>("decoration:active_opacity", "opacity of active windows.", 1, {.min = 0, .max = 1}),
-        MS<Float>("decoration:inactive_opacity", "opacity of inactive windows.", 1, {.min = 0, .max = 1}),
-        MS<Float>("decoration:fullscreen_opacity", "opacity of fullscreen windows.", 1, {.min = 0, .max = 1}),
-        MS<Bool>("decoration:shadow:enabled", "enable drop shadows on windows", true),
-        MS<Int>("decoration:shadow:range", "Shadow range (size) in layout px", 4, {.min = 0, .max = 100}),
-        MS<Int>("decoration:shadow:render_power", "in what power to render the falloff (more power, the faster the falloff)", 3, {.min = 1, .max = 4}),
-        MS<Bool>("decoration:shadow:sharp", "whether the shadow should be sharp or not.", false),
-        MS<Color>("decoration:shadow:color", "shadow's color. Alpha dictates shadow's opacity.", 0xee1a1a1a),
-        MS<Color>("decoration:shadow:color_inactive", "inactive shadow color. (if not set, will fall back to col.shadow)", -1),
-        MS<Vec2>("decoration:shadow:offset", "shadow's rendering offset.", Config::VEC2{}, {.validator = vec2Range(-250, -250, 250, 250)}),
-        MS<Float>("decoration:shadow:scale", "shadow's scale.", 1, {.min = 0, .max = 1}),
-        MS<Bool>("decoration:glow:enabled", "enable inner glow on windows", false),
-        MS<Int>("decoration:glow:range", "glow range (size) in layout px", 10, {.min = 0, .max = 100}),
-        MS<Int>("decoration:glow:render_power", "in what power to render the falloff (more power, the faster the falloff)", 3, {.min = 1, .max = 4}),
-        MS<Color>("decoration:glow:color", "glow's color. Alpha dictates glow's opacity.", 0xee33ccff),
-        MS<Color>("decoration:glow:color_inactive", "inactive glow color. (if not set, will fall back to decoration:glow:color)", 0x0033ccff),
-        MS<Bool>("decoration:dim_modal", "enables dimming of parents of modal windows", true),
-        MS<Bool>("decoration:dim_inactive", "enables dimming of inactive windows", false),
-        MS<Float>("decoration:dim_strength", "how much inactive windows should be dimmed", 0.5, {.min = 0, .max = 1}),
-        MS<Float>("decoration:dim_special", "how much to dim the rest of the screen by when a special workspace is open.", 0.2, {.min = 0, .max = 1}),
-        MS<Float>("decoration:dim_around", "how much the dimaround window rule should dim by.", 0.4, {.min = 0, .max = 1}),
+        MS<Int>("decoration:rounding", "rounded corners' radius (in layout px)", 0,
+                {.min = 0, .max = 100, .refresh = Supplementary::REFRESH_WINDOW_STATES | Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:rounding_power", "rounding power of corners (2 is a circle)", 2,
+                  {.min = 1, .max = 10, .refresh = Supplementary::REFRESH_WINDOW_STATES | Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:active_opacity", "opacity of active windows.", 1, {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Float>("decoration:inactive_opacity", "opacity of inactive windows.", 1, {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Float>("decoration:fullscreen_opacity", "opacity of fullscreen windows.", 1, {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Bool>("decoration:shadow:enabled", "enable drop shadows on windows", true, {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Int>("decoration:shadow:range", "Shadow range (size) in layout px", 4, {.min = 0, .max = 100, .refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Int>("decoration:shadow:render_power", "in what power to render the falloff (more power, the faster the falloff)", 3,
+                {.min = 1, .max = 4, .refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Bool>("decoration:shadow:sharp", "whether the shadow should be sharp or not.", false, {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Gradient>("decoration:shadow:color", "shadow's color. Alpha dictates shadow's opacity.", CHyprColor{0xee1a1a1a}, {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Gradient>("decoration:shadow:color_inactive", "inactive shadow color. (if not set, will fall back to col.shadow)", -1,
+                     {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Vec2>("decoration:shadow:offset", "shadow's rendering offset.", Config::VEC2{},
+                 {.validator = vec2Range(-250, -250, 250, 250), .refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Float>("decoration:shadow:scale", "shadow's scale.", 1, {.min = 0.05, .max = 2, .refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Bool>("decoration:glow:enabled", "enable inner glow on windows", false, {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Int>("decoration:glow:range", "glow range (size) in layout px", 10, {.min = 0, .max = 100, .refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Int>("decoration:glow:render_power", "in what power to render the falloff (more power, the faster the falloff)", 3,
+                {.min = 1, .max = 4, .refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Gradient>("decoration:glow:color", "glow's color. Alpha dictates glow's opacity.", CHyprColor{0xee33ccff}, {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Gradient>("decoration:glow:color_inactive", "inactive glow color. (if not set, will fall back to decoration:glow:color)", -1,
+                     {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Bool>("decoration:dim_modal", "enables dimming of parents of modal windows", true, {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Bool>("decoration:dim_inactive", "enables dimming of inactive windows", false, {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Float>("decoration:dim_strength", "how much inactive windows should be dimmed", 0.5, {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Float>("decoration:dim_special", "how much to dim the rest of the screen by when a special workspace is open.", 0.2,
+                  {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Float>("decoration:dim_around", "how much the dimaround window rule should dim by.", 0.4, {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_WINDOW_STATES}),
         MS<String>("decoration:screen_shader", "a path to a custom shader to be applied at the end of rendering.", STRVAL_EMPTY, {.refresh = Supplementary::REFRESH_SCREEN_SHADER}),
         MS<Bool>("decoration:border_part_of_window", "whether the border should be treated as a part of the window.", true),
 
@@ -225,23 +235,109 @@ std::vector<SP<IValue>> Values::getConfigValues() {
          * blur:
          */
 
-        MS<Bool>("decoration:blur:enabled", "enable kawase window background blur", true),
-        MS<Int>("decoration:blur:size", "blur size (distance)", 8, {.min = 0, .max = 100}),
-        MS<Int>("decoration:blur:passes", "the amount of passes to perform", 1, {.min = 0, .max = 10}),
-        MS<Bool>("decoration:blur:ignore_opacity", "make the blur layer ignore the opacity of the window", true),
-        MS<Bool>("decoration:blur:new_optimizations", "whether to enable further optimizations to the blur.", true),
-        MS<Bool>("decoration:blur:xray", "if enabled, floating windows will ignore tiled windows in their blur.", false),
-        MS<Float>("decoration:blur:noise", "how much noise to apply.", 0.0117, {.min = 0, .max = 1}),
-        MS<Float>("decoration:blur:contrast", "contrast modulation for blur.", 0.8916, {.min = 0, .max = 2}),
-        MS<Float>("decoration:blur:brightness", "brightness modulation for blur.", 1, {.min = 0, .max = 2}),
-        MS<Float>("decoration:blur:vibrancy", "Increase saturation of blurred colors.", 0.1696, {.min = 0, .max = 1}),
-        MS<Float>("decoration:blur:vibrancy_darkness", "How strong the effect of vibrancy is on dark areas.", 0, {.min = 0, .max = 1}),
-        MS<Bool>("decoration:blur:special", "whether to blur behind the special workspace (note: expensive)", false),
-        MS<Bool>("decoration:blur:popups", "whether to blur popups (e.g. right-click menus)", false),
-        MS<Float>("decoration:blur:popups_ignorealpha", "works like ignorealpha in layer rules. If pixel opacity is below set value, will not blur.", 0.2, {.min = 0, .max = 1}),
-        MS<Bool>("decoration:blur:input_methods", "whether to blur input methods (e.g. fcitx5)", false),
+        MS<Bool>("decoration:blur:enabled", "enable window background blur", true, {.refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Int>("decoration:blur:variant", "set the blur variant. Blur variants enhance regular blur, but may increase GPU and CPU usage, significantly so if they are animated.",
+                0,
+                {.min = 0,
+                 .max = 10,
+                 .map =
+                     OptionMap{
+                         {"kawase", 0},
+                         {"frost", 1},
+                         {"ripple", 2},
+                         {"drops", 3},
+                         {"water", 4},
+                         {"fluid_jar", 5},
+                         {"prism", 6},
+                         {"heat_shimmer", 7},
+                         {"acrylic", 8},
+                         {"aurora", 9},
+                         {"haze", 10},
+                     },
+                 .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Int>("decoration:blur:size", "blur size (distance)", 8, {.min = 0, .max = 100, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Int>("decoration:blur:passes", "the amount of passes to perform", 1, {.min = 0, .max = 10, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Bool>("decoration:blur:ignore_opacity", "make the blur layer ignore the opacity of the window", true, {.refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Bool>("decoration:blur:new_optimizations", "whether to enable further optimizations to the blur.", true, {.refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Bool>("decoration:blur:xray", "if enabled, floating windows will ignore tiled windows in their blur.", false, {.refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:noise", "how much noise to apply.", 0.0117, {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:contrast", "contrast modulation for blur.", 0.8916, {.min = 0, .max = 2, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:brightness", "brightness modulation for blur.", 1, {.min = 0, .max = 2, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:vibrancy", "Increase saturation of blurred colors.", 0.1696, {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:vibrancy_darkness", "How strong the effect of vibrancy is on dark areas.", 0, {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Bool>("decoration:blur:special", "whether to blur behind the special workspace (note: expensive)", false, {.refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Bool>("decoration:blur:popups", "whether to blur popups (e.g. right-click menus)", false, {.refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:popups_ignorealpha", "works like ignorealpha in layer rules. If pixel opacity is below set value, will not blur.", 0.2,
+                  {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Bool>("decoration:blur:input_methods", "whether to blur input methods (e.g. fcitx5)", false, {.refresh = Supplementary::REFRESH_BLUR_FB}),
         MS<Float>("decoration:blur:input_methods_ignorealpha", "works like ignorealpha in layer rules. If pixel opacity is below set value, will not blur.", 0.2,
-                  {.min = 0, .max = 1}),
+                  {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_BLUR_FB}),
+
+        // specific blur stuff
+        MS<Float>("decoration:blur:glass:refraction", "maximum refraction displacement for glass blur types in pixels", 20.F,
+                  {.min = 0, .max = 20, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:glass:size", "pattern size for glass blur types in pixels", 40.F, {.min = 4, .max = 512, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:glass:roughness", "strength of the glass relief shading", 1.F, {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_BLUR_FB}),
+
+        MS<Float>("decoration:blur:acrylic:refraction", "maximum acrylic lens displacement in pixels", 24.F, {.min = 0, .max = 48, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:acrylic:bulb", "width of the curved acrylic edge in pixels", 48.F, {.min = 4, .max = 256, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:acrylic:clarity", "amount of sharp backdrop transmitted through the acrylic surface", 0.82F,
+                  {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:acrylic:aberration", "relative chromatic separation in the acrylic lens", 0.025F,
+                  {.min = 0, .max = 0.25, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Color>("decoration:blur:acrylic:tint", "acrylic tint color. Alpha controls optical absorption.", 0x14EEF5FF, {.refresh = Supplementary::REFRESH_BLUR_FB}),
+
+        MS<Float>("decoration:blur:drops:speed", "animation speed for drops blur. 0 disables the animation. Enabling will significantly increase GPU usage.", 3.F,
+                  {.min = 0, .max = 10, .refresh = Supplementary::REFRESH_BLUR_FB}),
+
+        MS<Float>("decoration:blur:heat_shimmer:speed", "animation speed for heat shimmer blur. 0 disables the animation. Enabling will increase GPU usage.", 1.F,
+                  {.min = 0, .max = 10, .refresh = Supplementary::REFRESH_BLUR_FB}),
+
+        MS<Float>("decoration:blur:aurora:speed", "animation speed for aurora blur. 0 freezes the animation. Enabling will increase GPU usage.", 1.F,
+                  {.min = 0, .max = 10, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:aurora:intensity", "strength of the aurora color contribution", 0.35F, {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Color>("decoration:blur:aurora:color1", "first aurora curtain color. Alpha controls its contribution.", 0x29F0A0FF, {.refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Color>("decoration:blur:aurora:color2", "second aurora curtain color. Alpha controls its contribution.", 0x7A4DFFFF, {.refresh = Supplementary::REFRESH_BLUR_FB}),
+
+        MS<Float>("decoration:blur:haze:intensity", "strength of the haze pearlescent sheen", 0.35F, {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:haze:iridescence", "strength of the haze pearlescent color shift", 0.7F, {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_BLUR_FB}),
+
+        MS<Float>("decoration:blur:ripple:strength", "maximum refraction displacement of click ripples in pixels", 30.F,
+                  {.min = 0, .max = 32, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:ripple:radius", "maximum radius of click ripples in pixels", 400.F, {.min = 1, .max = 1000, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:ripple:width", "width of click ripple waves in pixels", 32.F, {.min = 1, .max = 200, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:ripple:duration", "duration of click ripples in seconds", 0.45F, {.min = 0.05, .max = 5, .refresh = Supplementary::REFRESH_BLUR_FB}),
+
+        MS<Float>("decoration:blur:water:strength", "maximum refraction displacement and injection strength for water blur in pixels", 32.F,
+                  {.min = 0, .max = 32, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:water:radius", "pointer radius for water blur in pixels", 20.F, {.min = 1, .max = 1000, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:water:speed", "propagation speed for water blur", 0.76F, {.min = 0, .max = 10, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:water:damping", "decay damping for water blur", 0.95F, {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:water:duration", "maximum water blur animation duration in seconds", 12.F, {.min = 0.5, .max = 60, .refresh = Supplementary::REFRESH_BLUR_FB}),
+
+        MS<Color>("decoration:blur:fluid_jar:color", "fluid color for fluid jar blur", 0xCC3399FF, {.refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:fluid_jar:speed", "animation speed for fluid jar blur", 3.7F, {.min = 0, .max = 10, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:fluid_jar:fill_amount", "fill amount for fluid jar blur", 0.5F, {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:fluid_jar:mass", "inertial mass for fluid jar blur", 1.4F, {.min = 0.1, .max = 10, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:fluid_jar:precision", "fluid simulation precision multiplier. 2x is a good compromise. 4x is expensive. 8x is extreme and unnecessary.", 2.F,
+                  {.min = 0.5, .max = 8, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:fluid_jar:turbulence", "interior fluid turbulence multiplier", 1.2F, {.min = 0, .max = 5, .refresh = Supplementary::REFRESH_BLUR_FB}),
+        MS<Float>("decoration:blur:fluid_jar:distortion", "fluid refraction distortion multiplier", 8.F, {.min = 0, .max = 10, .refresh = Supplementary::REFRESH_BLUR_FB}),
+
+        /*
+         * motion_blur:
+         */
+
+        MS<Bool>("decoration:motion_blur:enabled", "enable motion blur for moving and resizing windows", false, {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Int>("decoration:motion_blur:samples", "amount of samples used for motion blur", 7, {.min = 1, .max = 64, .refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Bool>("decoration:wobble:enabled", "enable wobble deformation for moving and resizing windows", false, {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Int>("decoration:wobble:mesh", "amount of wobble mesh vertices per edge", 12, {.min = 2, .max = 32, .refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Float>("decoration:wobble:stiffness", "spring stiffness for wobble deformation", 200, {.min = 0.0001, .max = 1000}),
+        MS<Float>("decoration:wobble:damping", "spring damping for wobble deformation", 12, {.min = 0, .max = 1000}),
+        MS<Float>("decoration:wobble:mass", "spring mass for wobble deformation", 1, {.min = 0.0001, .max = 1000}),
+        MS<Float>("decoration:wobble:intensity", "wobble deformation impulse multiplier", 0.2, {.min = 0, .max = 2}),
+        MS<Float>("decoration:wobble:value_epsilon", "position epsilon below which wobble is considered stable", 0.25, {.min = 0, .max = 100}),
+        MS<Float>("decoration:wobble:velocity_epsilon", "velocity epsilon below which wobble is considered stable", 2, {.min = 0, .max = 1000}),
 
         /*
          * animations:
@@ -279,7 +375,7 @@ std::vector<SP<IValue>> Values::getConfigValues() {
         MS<Int>("input:scroll_button", "Sets the scroll button. 0 means default.", 0, {.min = 0, .max = 300, .refresh = Supplementary::REFRESH_INPUT_DEVICES}),
         MS<Bool>("input:scroll_button_lock", "If the scroll button lock is enabled, the button does not need to be held down.", false,
                  {.refresh = Supplementary::REFRESH_INPUT_DEVICES}),
-        MS<Float>("input:scroll_factor", "Multiplier added to scroll movement for external mice.", 1, {.min = 0, .max = 2, .refresh = Supplementary::REFRESH_INPUT_DEVICES}),
+        MS<Float>("input:scroll_factor", "Multiplier added to scroll movement for external mice.", 1, {.min = 0, .max = 100, .refresh = Supplementary::REFRESH_INPUT_DEVICES}),
         MS<Bool>("input:natural_scroll", "Inverts scrolling direction.", false, {.refresh = Supplementary::REFRESH_INPUT_DEVICES}),
         MS<Int>("input:follow_mouse", "Specify if and how cursor movement should affect window focus.", 1,
                 {.min = 0, .max = 3, .map = OptionMap{{"disabled", 0}, {"follow", 1}, {"detached", 2}, {"separate", 3}}, .refresh = Supplementary::REFRESH_INPUT_DEVICES}),
@@ -307,7 +403,8 @@ std::vector<SP<IValue>> Values::getConfigValues() {
 
         MS<Bool>("input:touchpad:disable_while_typing", "Disable the touchpad while typing.", true, {.refresh = Supplementary::REFRESH_INPUT_DEVICES}),
         MS<Bool>("input:touchpad:natural_scroll", "Inverts scrolling direction.", false, {.refresh = Supplementary::REFRESH_INPUT_DEVICES}),
-        MS<Float>("input:touchpad:scroll_factor", "Multiplier applied to the amount of scroll movement.", 1, {.min = 0, .max = 2, .refresh = Supplementary::REFRESH_INPUT_DEVICES}),
+        MS<Float>("input:touchpad:scroll_factor", "Multiplier applied to the amount of scroll movement.", 1,
+                  {.min = 0, .max = 100, .refresh = Supplementary::REFRESH_INPUT_DEVICES}),
         MS<Bool>("input:touchpad:middle_button_emulation", "Sending LMB and RMB simultaneously will be interpreted as a middle click.", false,
                  {.refresh = Supplementary::REFRESH_INPUT_DEVICES}),
         MS<String>("input:touchpad:tap_button_map", "Sets the tap button mapping for touchpad button emulation. [lrm/lmr]", STRVAL_EMPTY,
@@ -345,6 +442,7 @@ std::vector<SP<IValue>> Values::getConfigValues() {
          * input:tablet:
          */
 
+        MS<Bool>("input:tablet:enabled", "Whether input is enabled for tablets.", true, {.refresh = Supplementary::REFRESH_INPUT_DEVICES}),
         MS<Int>("input:tablet:transform", "transform the input from tablets.", 0, {.min = 0, .max = 6, .refresh = Supplementary::REFRESH_INPUT_DEVICES}),
         MS<String>("input:tablet:output", "the monitor to bind tablets.", STRVAL_EMPTY, {.refresh = Supplementary::REFRESH_INPUT_DEVICES}),
         MS<Vec2>("input:tablet:region_position", "position of the mapped region in monitor layout.", Config::VEC2{},
@@ -359,6 +457,25 @@ std::vector<SP<IValue>> Values::getConfigValues() {
                  {.validator = vec2Range(0, 0, 500, 500), .refresh = Supplementary::REFRESH_INPUT_DEVICES}),
         MS<Vec2>("input:tablet:active_area_position", "position of the active area in mm", Config::VEC2{},
                  {.validator = vec2Range(0, 0, 500, 500), .refresh = Supplementary::REFRESH_INPUT_DEVICES}),
+
+        /*
+         * input:tablettool:
+         */
+
+        MS<Int>("input:tablettool:eraser_button_mode",
+                "Change the eraser button behavior on the tool. When set to 0, use the default hardware behavior of the tool. "
+                "When set to 1, the eraser button on the tool sends a button event instead.",
+                0, {.min = 0, .max = 6, .refresh = Supplementary::REFRESH_INPUT_DEVICES}),
+        MS<Int>("input:tablettool:eraser_button_override",
+                "Set a button to be button event when eraser_button_mode is set to 1. Has to be an int, cannot be a string. Must be a valid button (e.g. BTN_STYLUS) "
+                "excluding fake buttons (e.g. BTN_TOOL_*) and keys (KEY_*). Check wev if you have any doubts regarding the ID. 0 means default.",
+                0, {.min = 0, .refresh = Supplementary::REFRESH_INPUT_DEVICES}),
+        MS<Float>("input:tablettool:pressure_range_min",
+                  "Set the minimum pressure range for the tool, a negative number will set the default minimum pressure value. This is usually 0.0", -1.0,
+                  {.min = -1.0, .max = 1.0, .refresh = Supplementary::REFRESH_INPUT_DEVICES}),
+        MS<Float>("input:tablettool:pressure_range_max",
+                  "Set the maximum pressure range for the tool, a negative number will set the default maximum pressure value. This is usually 1.0", -1.0,
+                  {.min = -1.0, .max = 1.0, .refresh = Supplementary::REFRESH_INPUT_DEVICES}),
 
         /*
          * gestures:
@@ -392,7 +509,7 @@ std::vector<SP<IValue>> Values::getConfigValues() {
         MS<Gradient>("group:col.border_locked_active", "active locked group border color", CHyprColor{0x66775500}, {.refresh = Supplementary::REFRESH_GRADIENTS_GROUPBAR}),
         MS<Bool>("group:auto_group", "automatically group new windows", true),
         MS<Int>("group:drag_into_group", "whether dragging a window into a unlocked group will merge them.", 1,
-                {.min = 0, .max = 2, .map = OptionMap{{"disabled", 0}, {"enabled", 1}, {"only when dragging into the groupbar", 2}}}),
+                {.min = 0, .max = 2, .map = OptionMap{{"disabled", 0}, {"enabled", 1}, {"only_into_groupbar", 2}}}),
         MS<Bool>("group:merge_floated_into_tiled_on_groupbar", "whether dragging a floating window into a tiled window groupbar will merge them", false),
         MS<Bool>("group:group_on_movetoworkspace", "whether using movetoworkspace[silent] will merge the window into the workspace's solitary unlocked group", false),
 
@@ -400,7 +517,9 @@ std::vector<SP<IValue>> Values::getConfigValues() {
          * group:groupbar:
          */
 
-        MS<Bool>("group:groupbar:enabled", "enables groupbars", true),
+        MS<Bool>("group:groupbar:enabled", "enables groupbars", true, {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
+        MS<Bool>("group:groupbar:disable_when_only", "disable if contains single window. Considered only if enabled == true", false,
+                 {.refresh = Supplementary::REFRESH_WINDOW_STATES}),
         MS<String>("group:groupbar:font_family", "font used to display groupbar titles", "[[EMPTY]]"),
         MS<FontWeight>("group:groupbar:font_weight_active", "weight of the font used to display active groupbar titles"),
         MS<FontWeight>("group:groupbar:font_weight_inactive", "weight of the font used to display inactive groupbar titles"),
@@ -408,16 +527,16 @@ std::vector<SP<IValue>> Values::getConfigValues() {
         MS<Bool>("group:groupbar:gradients", "enables gradients", false),
         MS<Int>("group:groupbar:height", "height of the groupbar", 14, {.min = 1, .max = 64}),
         MS<Int>("group:groupbar:indicator_gap", "height of the gap between the groupbar indicator and title", 0, {.min = 0, .max = 64}),
-        MS<Int>("group:groupbar:indicator_height", "height of the groupbar indicator", 3, {.min = 1, .max = 64}),
+        MS<Int>("group:groupbar:indicator_height", "height of the groupbar indicator", 3, {.min = 0, .max = 64}),
         MS<Bool>("group:groupbar:stacked", "render the groupbar as a vertical stack", false),
         MS<Int>("group:groupbar:priority", "sets the decoration priority for groupbars", 3, {.min = 0, .max = 6}),
         MS<Bool>("group:groupbar:render_titles", "whether to render titles in the group bar decoration", true),
         MS<Bool>("group:groupbar:scrolling", "whether scrolling in the groupbar changes group active window", true),
         MS<Bool>("group:groupbar:middle_click_close", "whether middle clicking the groupbar closes the clicked window", true),
-        MS<Int>("group:groupbar:rounding", "how much to round the groupbar", 1, {.min = 0, .max = 20}),
-        MS<Float>("group:groupbar:rounding_power", "rounding power of groupbar corners (2 is a circle)", 2, {.min = 2, .max = 10}),
-        MS<Int>("group:groupbar:gradient_rounding", "how much to round the groupbar gradient", 2, {.min = 0, .max = 20}),
-        MS<Float>("group:groupbar:gradient_rounding_power", "rounding power of groupbar gradient corners (2 is a circle)", 2, {.min = 2, .max = 10}),
+        MS<Int>("group:groupbar:rounding", "how much to round the groupbar", 1, {.min = 0, .max = 40}),
+        MS<Float>("group:groupbar:rounding_power", "rounding power of groupbar corners (2 is a circle)", 2, {.min = 1, .max = 10}),
+        MS<Int>("group:groupbar:gradient_rounding", "how much to round the groupbar gradient", 2, {.min = 0, .max = 40}),
+        MS<Float>("group:groupbar:gradient_rounding_power", "rounding power of groupbar gradient corners (2 is a circle)", 2, {.min = 1, .max = 10}),
         MS<Bool>("group:groupbar:round_only_edges", "if yes, will only round at the groupbar edges", true),
         MS<Bool>("group:groupbar:gradient_round_only_edges", "if yes, will only round at the groupbar gradient edges", true),
         MS<Color>("group:groupbar:text_color", "color for window titles in the groupbar", 0xffffffff),
@@ -446,7 +565,7 @@ std::vector<SP<IValue>> Values::getConfigValues() {
         MS<String>("misc:splash_font_family", "Changes the font used to render the splash text.", "[[EMPTY]]"),
         MS<Int>("misc:force_default_wallpaper", "Force any of the 3 default wallpapers. [-1/0/1/2]", -1, {.min = -1, .max = 2}),
         MS<Int>("misc:vrr", "controls the VRR (Adaptive Sync) of your monitors", 0,
-                {.min = 0, .max = 3, .map = OptionMap{{"off", 0}, {"on", 1}, {"fullscreen", 2}, {"fullscreen_game", 3}}}),
+                {.min = 0, .max = 3, .map = OptionMap{{"off", 0}, {"on", 1}, {"fullscreen", 2}, {"fullscreen_game", 3}}, .refresh = Supplementary::REFRESH_MONITOR_STATES}),
         MS<Bool>("misc:mouse_move_enables_dpms", "If DPMS is set to off, wake up the monitors if the mouse moves", false),
         MS<Bool>("misc:key_press_enables_dpms", "If DPMS is set to off, wake up the monitors if a key is pressed.", false),
         MS<Bool>("misc:name_vk_after_proc", "Name virtual keyboards after the processes that create them.", true),
@@ -462,12 +581,16 @@ std::vector<SP<IValue>> Values::getConfigValues() {
         MS<Bool>("misc:mouse_move_focuses_monitor", "Whether mouse moving into a different monitor should focus it", true),
         MS<Bool>("misc:allow_session_lock_restore", "if true, will allow you to restart a lockscreen app in case it crashes.", false),
         MS<Bool>("misc:session_lock_xray", "keep rendering workspaces below your lockscreen", false),
+        MS<Bool>("misc:session_lock_blur", "Enable blur for lockscreen. You probably want to enable `session_lock_xray`.", false),
         MS<Color>("misc:background_color", "change the background color.", 0xff111111),
         MS<Bool>("misc:close_special_on_empty", "close the special workspace if the last window is removed", true),
         MS<Int>("misc:on_focus_under_fullscreen", "if there is a fullscreen or maximized window, decide whether a tiled window requested to focus should replace it.", 2,
                 {.min = 0, .max = 2, .map = OptionMap{{"ignore", 0}, {"take_over", 1}, {"exit_fullscreen", 2}}}),
-        MS<Bool>("misc:exit_window_retains_fullscreen", "if true, closing a fullscreen window makes the next focused window fullscreen", false),
+        MS<Int>("misc:exit_window_retains_fullscreen", "whether closing a fullscreen window makes the next focused window to be fullscreened", 0,
+                {.min = 0, .max = 3, .map = OptionMap{{"disable", 0}, {"enable", 1}, {"only_when_grouped", 2}, {"only_when_nongrouped", 3}}}),
         MS<Int>("misc:initial_workspace_tracking", "if enabled, windows will open on the workspace they were invoked on.", 1, {.min = 0, .max = 2}),
+        MS<Int>("misc:initial_workspace_token_timeout", "the time in seconds a window has to open on its invoked workspace before the tracking token expires.", 10,
+                {.min = 1, .max = 3600}),
         MS<Bool>("misc:middle_click_paste", "whether to enable middle-click-paste (aka primary selection)", true),
         MS<Int>("misc:render_unfocused_fps", "the maximum limit for renderunfocused windows' fps in the background", 15, {.min = 1, .max = 120}),
         MS<Bool>("misc:disable_xdg_env_checks", "disable the warning if XDG environment is externally managed", false),
@@ -479,6 +602,9 @@ std::vector<SP<IValue>> Values::getConfigValues() {
         MS<Bool>("misc:screencopy_force_8b", "forces 8 bit screencopy", true),
         MS<Bool>("misc:disable_scale_notification", "disables notification popup when a monitor fails to set a suitable scale", false),
         MS<Bool>("misc:size_limits_tiled", "whether to apply minsize and maxsize rules to tiled windows", false),
+        MS<String>("misc:bell_sound", "path to custom wav/ogg system bell. `none` or an empty string mute it. `default` uses the system's current one.", "default"),
+        MS<Int>("misc:new_float_force_onscreen", "whether new floating windows must be placed fully/partially on-screen", 2),
+        MS<Int>("misc:float_force_onscreen", "whether existing floating windows must remain fully/partially on-screen", 0),
 
         /*
          * binds:
@@ -486,7 +612,8 @@ std::vector<SP<IValue>> Values::getConfigValues() {
 
         MS<Bool>("binds:pass_mouse_when_bound", "if disabled, will not pass the mouse events to apps / dragging windows around if a keybind has been triggered.", false),
         MS<Int>("binds:scroll_event_delay", "in ms, how many ms to wait after a scroll event to allow passing another one for the binds.", 300, {.min = 0, .max = 2000}),
-        MS<Bool>("binds:workspace_back_and_forth", "If enabled, an attempt to switch to the currently focused workspace will instead switch to the previous workspace.", false),
+        MS<Int>("binds:workspace_back_and_forth", "An attempt to switch to the currently focused workspace will instead switch to the previous workspace.", 0,
+                {.min = 0, .max = 2, .map = OptionMap{{"disabled", 0}, {"all_monitors", 1}, {"per_monitor", 2}}}),
         MS<Bool>("binds:hide_special_on_workspace_change", "If enabled, changing the active workspace will hide the special workspace on the monitor.", false),
         MS<Bool>("binds:allow_workspace_cycles", "If enabled, workspaces don't forget their previous workspace.", false),
         MS<Int>("binds:workspace_center_on", "Whether switching workspaces should center the cursor on the workspace (0) or on the last active window (1)", 1,
@@ -501,6 +628,7 @@ std::vector<SP<IValue>> Values::getConfigValues() {
         MS<Bool>("binds:allow_pin_fullscreen", "Allows fullscreen to pinned windows, and restore their pinned status afterwards", false),
         MS<Int>("binds:drag_threshold", "Movement threshold in pixels for window dragging and c/g bind flags. 0 to disable.", 0,
                 {.min = 0, .max = std::numeric_limits<int>::max()}),
+        MS<Bool>("binds:drag_center_window", "If enabled, dragging a tiled or fullscreen window will center it on the cursor when it becomes floating.", true),
 
         /*
          * xwayland:
@@ -531,6 +659,7 @@ std::vector<SP<IValue>> Values::getConfigValues() {
         MS<Int>("render:cm_auto_hdr", "Auto-switch to hdr mode when fullscreen app is in hdr", 1,
                 {.min = 0, .max = 2, .map = OptionMap{{"disable", 0}, {"hdr", 1}, {"hdredid", 2}}}),
         MS<Bool>("render:new_render_scheduling", "enable new render scheduling, which should improve FPS on underpowered devices.", false),
+        MS<Bool>("render:async_commit", "Submit eligible output commits asynchronously.", false),
         MS<Int>("render:non_shader_cm", "Enable CM without shader.", 3, {.min = 0, .max = 3, .map = OptionMap{{"disable", 0}, {"always", 1}, {"ondemand", 2}, {"ignore", 3}}}),
         MS<String>("render:cm_sdr_eotf", "Default transfer function for displaying SDR apps.", "default"),
         MS<Bool>("render:commit_timing_enabled", "Enable commit timing proto. Requires restart", true),
@@ -542,13 +671,17 @@ std::vector<SP<IValue>> Values::getConfigValues() {
         MS<Int>("render:non_shader_cm_interop", "non_shader_cm interaction with ctm proto (hyprsunset and similar).", 2,
                 {.min = 0, .max = 2, .map = OptionMap{{"disable", 0}, {"enable", 1}, {"auto", 2}}}),
         MS<Int>("render:fp16_sdr_tf", "Internal workbuffer transfer function for fp16 in SDR mode", 0, {.min = 0, .max = 1, .map = OptionMap{{"monitor", 0}, {"linear", 1}}}),
+        MS<Int>("render:not_shown_fifo_lock",
+                "Control fifo locking for not shown surfaces. always - use fifo lock for any surface, ignore_unfocused - ignore render_unfocused windows, never - skip locking "
+                "invisible surfaces",
+                0, {.min = 0, .max = 2, .map = OptionMap{{"always", 0}, {"ignore_unfocused", 1}, {"never", 2}}}),
 
         /*
          * cursor:
          */
 
         MS<Bool>("cursor:invisible", "don't render cursors", false),
-        MS<Int>("cursor:no_hardware_cursors", "disables hardware cursors.", 0, {.min = 0, .max = 2, .map = OptionMap{{"Disabled", 0}, {"Enabled", 1}, {"Auto", 2}}}),
+        MS<Int>("cursor:no_hardware_cursors", "disables hardware cursors.", 2, {.min = 0, .max = 2, .map = OptionMap{{"Disabled", 0}, {"Enabled", 1}, {"Auto", 2}}}),
         MS<Int>("cursor:no_break_fs_vrr", "disables scheduling new frames on cursor movement for fullscreen apps with VRR enabled.", 2,
                 {.min = 0, .max = 2, .map = OptionMap{{"disable", 0}, {"enable", 1}, {"auto", 2}}}),
         MS<Int>("cursor:min_refresh_rate", "minimum refresh rate for cursor movement when no_break_fs_vrr is active.", 24, {.min = 10, .max = 500}),
@@ -558,6 +691,8 @@ std::vector<SP<IValue>> Values::getConfigValues() {
         MS<Bool>("cursor:persistent_warps", "When a window is refocused, the cursor returns to its last position relative to that window.", false),
         MS<Int>("cursor:warp_on_change_workspace", "Move the cursor to the last focused window after changing the workspace.", 0,
                 {.min = 0, .max = 2, .map = OptionMap{{"disable", 0}, {"enable", 1}, {"force", 2}}}),
+        MS<Int>("cursor:warp_on_monitor_change", "Move the cursor to the last focused window when focusing a different monitor.", -1,
+                {.min = -1, .max = 2, .map = OptionMap{{"same_as_warp_on_change_workspace", -1}, {"disable", 0}, {"enable", 1}, {"force", 2}}}),
         MS<Int>("cursor:warp_on_toggle_special", "Move the cursor to the last focused window when toggling a special workspace.", 0,
                 {.min = 0, .max = 2, .map = OptionMap{{"disable", 0}, {"enable", 1}, {"force", 2}}}),
         MS<String>("cursor:default_monitor", "the name of a default monitor for the cursor to be set to on startup", STRVAL_EMPTY),
@@ -603,10 +738,14 @@ std::vector<SP<IValue>> Values::getConfigValues() {
         MS<Bool>("debug:full_cm_proto", "claims support for all cm proto features (requires restart)", false),
         MS<Bool>("debug:ds_handle_same_buffer", "Special case for DS with unmodified buffer", true),
         MS<Bool>("debug:ds_handle_same_buffer_fifo", "Special case for DS with unmodified buffer unlocks fifo", true),
-        MS<Bool>("debug:fifo_pending_workaround", "Fifo workaround for empty pending list", false),
         MS<Bool>("debug:render_solitary_wo_damage", "Render solitary window with empty damage", false),
         MS<Bool>("debug:vfr", "controls the VFR status of Hyprland. Do not turn off unless debugging", true),
-        MS<Int>("debug:invalidate_fp16", "allow fp16 buffer invalidation.", 1, {.min = 0, .max = 2, .map = OptionMap{{"disable", 0}, {"enable", 1}, {"auto", 2}}}),
+        MS<Int>("debug:invalidate_buffers", "allow buffer invalidation.", 1, {.min = 0, .max = 1, .map = OptionMap{{"disable", 0}, {"enable", 1}}}),
+        MS<Int>("debug:invalidate_fp16", "allow fp16 buffer invalidation.", 1,
+                {.min               = 0,
+                 .max               = 2,
+                 .map               = OptionMap{{"disable", 0}, {"enable", 1}, {"auto", 2}},
+                 .deprecationNotice = "no longer does anything, use debug:invalidate_buffers instead."}),
 
         /*
          * layout:
@@ -626,7 +765,8 @@ std::vector<SP<IValue>> Values::getConfigValues() {
         MS<Bool>("dwindle:smart_split", "if enabled, allows a more precise control over the window split direction based on the cursor's position.", false),
         MS<Bool>("dwindle:smart_resizing", "if enabled, resizing direction will be determined by the mouse's position on the window.", true),
         MS<Bool>("dwindle:permanent_direction_override", "if enabled, makes the preselect direction persist.", false),
-        MS<Float>("dwindle:special_scale_factor", "specifies the scale factor of windows on the special workspace", 1, {.min = 0, .max = 1}),
+        MS<Float>("dwindle:special_scale_factor", "specifies the scale factor of windows on the special workspace", 1,
+                  {.min = 0, .max = 1, .deprecationNotice = "Use workspace rules to achieve the same effect"}),
         MS<Float>("dwindle:split_width_multiplier", "specifies the auto-split width multiplier", 1, {.min = 0.1F, .max = 3}),
         MS<Bool>("dwindle:use_active_for_splits", "whether to prefer the active window or the mouse position for splits", true),
         MS<Float>("dwindle:default_split_ratio", "the default split ratio on window open.", 1, {.min = 0.1F, .max = 1.9F}),
@@ -638,7 +778,8 @@ std::vector<SP<IValue>> Values::getConfigValues() {
          */
 
         MS<Bool>("master:allow_small_split", "enable adding additional master windows in a horizontal split style", false),
-        MS<Float>("master:special_scale_factor", "the scale of the special workspace windows.", 1, {.min = 0, .max = 1}),
+        MS<Float>("master:special_scale_factor", "the scale of the special workspace windows.", 1,
+                  {.min = 0, .max = 1, .deprecationNotice = "Use workspace rules to achieve the same effect"}),
         MS<Float>("master:mfact", "the size as a percentage of the master window.", 0.55, {.min = 0, .max = 1, .refresh = Supplementary::REFRESH_LAYOUTS}),
         MS<String>("master:new_status", "`master`: new window becomes master; `slave`: new windows are added to slave stack; `inherit`: inherit from focused window", "slave"),
         MS<Bool>("master:new_on_top", "whether a newly open window should be on the top of the stack", false),
@@ -676,14 +817,20 @@ std::vector<SP<IValue>> Values::getConfigValues() {
          * experimental:
          */
 
-        MS<Bool>("experimental:wp_cm_1_2", "Allow wp-cm-v1 version 2", false),
+        MS<Bool>("experimental:wp_cm_1_2", "Allow wp-cm-v1 version 2", true),
+
+        /*
+		 * input_capture:
+		 */
+        MS<Bool>("input-capture:capture_modifiers", "If enabled, modifiers are also captured and sent to the program", false),
+        MS<Bool>("input-capture:enforce_barriers", "If enabled, throw a wayland error when a invalid barrier is received", true),
 
         /*
          * quirks:
          */
 
         MS<Int>("quirks:prefer_hdr", "Prefer HDR mode.", 0, {.min = 0, .max = 2, .map = OptionMap{{"disable", 0}, {"enable", 1}, {"gamescope_only", 2}}}),
-        MS<Bool>("quirks:skip_non_kms_dmabuf_formats", "Do not report dmabuf formats which cannot be imported into KMS", false),
+        MS<Bool>("quirks:skip_non_kms_dmabuf_formats", "Do not report dmabuf formats which cannot be imported into KMS", true),
     };
 
 #undef MS

@@ -27,18 +27,18 @@ static std::string getTempRoot() {
 // write the state to a file
 static bool writeState(const std::string& str, const std::string& to) {
     // create temp file in a safe temp root
-    std::ofstream of(getTempRoot() + ".temp-state", std::ios::trunc);
+    std::ofstream of(std::format("{}.temp-state", getTempRoot()), std::ios::trunc);
     if (!of.good())
         return false;
 
     of << str;
     of.close();
 
-    return NSys::root::install(getTempRoot() + ".temp-state", to, "644");
+    return NSys::root::install(std::format("{}.temp-state", getTempRoot()), to, "644");
 }
 
 std::filesystem::path DataState::getDataStatePath() {
-    return std::filesystem::path("/var/cache/hyprpm/" + g_pPluginManager->m_szUsername);
+    return std::filesystem::path(std::format("/var/cache/hyprpm/{}", g_pPluginManager->m_szUsername));
 }
 
 std::string DataState::getHeadersPath() {
@@ -100,7 +100,7 @@ void DataState::addNewPluginRepo(const SPluginRepository& repo) {
         }}
     };
     for (auto const& p : repo.plugins) {
-        const auto filename = p.name + ".so";
+        const auto filename = std::format("{}.so", p.name);
 
         // copy .so to the good place and chmod 755
         if (std::filesystem::exists(p.filename)) {
@@ -123,7 +123,7 @@ void DataState::addNewPluginRepo(const SPluginRepository& repo) {
         Debug::die("{}", failureString("Failed to write plugin state"));
 }
 
-bool DataState::pluginRepoExists(const SPluginRepoIdentifier identifier) {
+bool DataState::pluginRepoExists(const SPluginRepoIdentifier& identifier) {
     ensureStateStoreExists();
 
     for (const auto& stateFile : getPluginStates()) {
@@ -139,7 +139,7 @@ bool DataState::pluginRepoExists(const SPluginRepoIdentifier identifier) {
     return false;
 }
 
-void DataState::removePluginRepo(const SPluginRepoIdentifier identifier) {
+void DataState::removePluginRepo(const SPluginRepoIdentifier& identifier) {
     ensureStateStoreExists();
 
     for (const auto& stateFile : getPluginStates()) {
@@ -251,7 +251,7 @@ std::vector<SPluginRepository> DataState::getAllRepositories() {
     return repos;
 }
 
-bool DataState::setPluginEnabled(const SPluginRepoIdentifier identifier, bool enabled) {
+bool DataState::setPluginEnabled(const SPluginRepoIdentifier& identifier, bool enabled) {
     ensureStateStoreExists();
 
     for (const auto& stateFile : getPluginStates()) {
@@ -274,7 +274,8 @@ bool DataState::setPluginEnabled(const SPluginRepoIdentifier identifier, bool en
 
             const auto FAILED = STATE[key]["failed"].value_or(false);
 
-            if (FAILED)
+            // a plugin that failed to build cannot be enabled, but can always be disabled
+            if (FAILED && enabled)
                 return false;
 
             auto modifiedState = STATE;

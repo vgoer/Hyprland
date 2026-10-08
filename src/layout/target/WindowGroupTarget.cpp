@@ -23,15 +23,15 @@ eTargetType CWindowGroupTarget::type() {
     return TARGET_TYPE_GROUP;
 }
 
-void CWindowGroupTarget::setPositionGlobal(const STargetBox& box) {
-    ITarget::setPositionGlobal(box);
+void CWindowGroupTarget::setPositionGlobal(const STargetBox& box, uint8_t flags) {
+    ITarget::setPositionGlobal(box, flags);
 
-    updatePos();
+    updatePos(flags);
 }
 
-void CWindowGroupTarget::updatePos() {
+void CWindowGroupTarget::updatePos(uint8_t flags) {
     for (const auto& w : m_group->windows()) {
-        w->m_target->setPositionGlobal(m_box);
+        w->windowTarget()->setPositionGlobal(m_box, flags);
     }
 }
 
@@ -43,41 +43,21 @@ void CWindowGroupTarget::assignToSpace(const SP<CSpace>& space, std::optional<Ve
 }
 
 bool CWindowGroupTarget::floating() {
-    return m_group->current()->m_target->floating();
+    return m_group->current()->isFloating();
 }
 
 void CWindowGroupTarget::setFloating(bool x) {
     for (const auto& w : m_group->windows()) {
-        w->m_target->setFloating(x);
+        w->windowTarget()->setFloating(x);
     }
 }
 
 std::expected<SGeometryRequested, eGeometryFailure> CWindowGroupTarget::desiredGeometry() {
-    return m_group->current()->m_target->desiredGeometry();
+    return m_group->current()->windowTarget()->desiredGeometry();
 }
 
 PHLWINDOW CWindowGroupTarget::window() const {
     return m_group->current();
-}
-
-eFullscreenMode CWindowGroupTarget::fullscreenMode() {
-    return m_group->current()->m_fullscreenState.internal;
-}
-
-void CWindowGroupTarget::setFullscreenMode(eFullscreenMode mode) {
-    m_group->current()->m_fullscreenState.internal = mode;
-}
-
-bool CWindowGroupTarget::layoutManagedFullscreen() const {
-    return m_group->current()->m_target->layoutManagedFullscreen();
-}
-
-void CWindowGroupTarget::setLayoutManagedFullscreen(bool enabled) {
-    ITarget::setLayoutManagedFullscreen(enabled);
-
-    for (const auto& w : m_group->windows()) {
-        w->m_target->setLayoutManagedFullscreen(enabled);
-    }
 }
 
 std::optional<Vector2D> CWindowGroupTarget::minSize() {
@@ -94,12 +74,16 @@ void CWindowGroupTarget::damageEntire() {
 
 void CWindowGroupTarget::warpPositionSize() {
     for (const auto& w : m_group->windows()) {
-        w->m_target->warpPositionSize();
+        w->windowTarget()->warpPositionSize();
     }
 }
 
 void CWindowGroupTarget::onUpdateSpace() {
     for (const auto& w : m_group->windows()) {
-        w->m_target->onUpdateSpace();
+        w->windowTarget()->onUpdateSpace();
     }
+}
+
+SP<Desktop::View::CGroup> CWindowGroupTarget::getGroup() {
+    return m_group.lock();
 }

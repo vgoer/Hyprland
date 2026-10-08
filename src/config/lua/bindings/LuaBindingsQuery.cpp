@@ -1,5 +1,8 @@
 #include "LuaBindingsInternal.hpp"
 
+#include "Check.hpp"
+
+#include "../objects/LuaDevice.hpp"
 #include "../objects/LuaLayerSurface.hpp"
 #include "../objects/LuaMonitor.hpp"
 #include "../objects/LuaWindow.hpp"
@@ -9,8 +12,13 @@
 #include "../../../desktop/history/WorkspaceHistoryTracker.hpp"
 #include "../../../desktop/rule/windowRule/WindowRuleEffectContainer.hpp"
 #include "../../../desktop/view/LayerSurface.hpp"
-#include "../../../desktop/view/Window.hpp"
+#include "../../../desktop/view/window/Window.hpp"
 #include "../../../managers/input/InputManager.hpp"
+#include "../../../pointer/PointerManager.hpp"
+#include "../../../state/MonitorState.hpp"
+#include "../../../state/WorkspaceState.hpp"
+
+#include <hyprutils/utils/ScopeGuard.hpp>
 
 using namespace Config;
 using namespace Config::Lua;
@@ -43,16 +51,16 @@ static bool windowMatchesQuery(const PHLWINDOW& w, const SWindowQuery& query) {
     if (query.workspace && w->m_workspace != *query.workspace)
         return false;
 
-    if (query.floating && w->m_isFloating != *query.floating)
+    if (query.floating && w->isFloating() != *query.floating)
         return false;
 
-    if (query.mapped && w->m_isMapped != *query.mapped)
+    if (query.mapped && w->mapped() != *query.mapped)
         return false;
 
-    if (query.className && w->m_class != *query.className)
+    if (query.className && w->metadata().appID() != *query.className)
         return false;
 
-    if (query.title && w->m_title != *query.title)
+    if (query.title && w->metadata().title() != *query.title)
         return false;
 
     if (query.tag) {
@@ -67,7 +75,7 @@ static void pushWindowsMatchingQuery(lua_State* L, const SWindowQuery& query) {
     lua_newtable(L);
 
     int i = 1;
-    for (const auto& w : g_pCompositor->m_windows) {
+    for (const auto& w : Desktop::windowState()->windows()) {
         if (!windowMatchesQuery(w, query))
             continue;
 
@@ -141,7 +149,7 @@ static int hlGetWindow(lua_State* L) {
 }
 
 static int hlGetUrgentWindow(lua_State* L) {
-    const auto PWINDOW = g_pCompositor->getUrgentWindow();
+    const auto PWINDOW = Desktop::viewState()->query().urgent().runWindow();
     if (!PWINDOW) {
         lua_pushnil(L);
         return 1;
@@ -154,9 +162,9 @@ static int hlGetUrgentWindow(lua_State* L) {
 static int hlGetWorkspaces(lua_State* L) {
     lua_newtable(L);
     int i = 1;
-    for (const auto& wsRef : g_pCompositor->getWorkspaces()) {
+    for (const auto& wsRef : State::Workspace::state()->workspaces()) {
         const auto ws = wsRef.lock();
-        if (!ws || ws->inert())
+        if (!ws)
             continue;
         Objects::CLuaWorkspace::push(L, ws);
         lua_rawseti(L, -2, i++);
@@ -198,12 +206,66 @@ static int hlGetActiveSpecialWorkspace(lua_State* L) {
 }
 
 static int hlGetMonitors(lua_State* L) {
+    bool allMonitors = false;
+
+    if (!lua_isnoneornil(L, 1)) {
+        if (!lua_istable(L, 1))
+            return Internal::configError(L, "hl.get_monitors: expected no args or a table of options");
+
+        {
+            lua_getfield(L, 1, "all");
+            Hyprutils::Utils::CScopeGuard x([L] { lua_pop(L, 1); });
+
+            if (!lua_isnil(L, -1)) {
+                const auto all = Check::boolean(L, -1);
+                if (!all)
+                    return Internal::configError(L, "hl.get_monitors: option 'all': {}", all.error());
+
+                allMonitors = *all;
+            }
+        }
+    }
+
     lua_newtable(L);
     int i = 1;
-    for (const auto& mon : g_pCompositor->m_monitors) {
+    for (const auto& mon : allMonitors ? State::monitorState()->allMonitors() : State::monitorState()->monitors()) {
         Objects::CLuaMonitor::push(L, mon);
         lua_rawseti(L, -2, i++);
     }
+
+    return 1;
+}
+
+static int hlGetDevices(lua_State* L) {
+    lua_newtable(L);
+    if (!g_pInputManager)
+        return 1;
+
+    int        i      = 1;
+    const auto append = [&](const auto& devices) {
+        for (const auto& device : devices) {
+            if (!device)
+                continue;
+
+            Objects::CLuaDevice::push(L, WP<IHID>{device});
+            lua_rawseti(L, -2, i++);
+        }
+    };
+
+    append(g_pInputManager->m_pointers);
+    append(g_pInputManager->m_keyboards);
+    append(g_pInputManager->m_tabletPads);
+    append(g_pInputManager->m_tablets);
+    append(g_pInputManager->m_tabletTools);
+    append(g_pInputManager->m_touches);
+    for (const auto& device : g_pInputManager->m_switches) {
+        if (!device.pDevice)
+            continue;
+
+        Objects::CLuaDevice::push(L, device.pDevice, rc<uintptr_t>(&device));
+        lua_rawseti(L, -2, i++);
+    }
+
     return 1;
 }
 
@@ -242,11 +304,19 @@ static int hlGetMonitorAt(lua_State* L) {
         x = *tx;
         y = *ty;
     } else {
-        x = luaL_checknumber(L, 1);
-        y = luaL_checknumber(L, 2);
+        const auto tx = Check::number(L, 1);
+        if (!tx)
+            return Internal::configError(L, std::format("get_monitor_at: bad argument 1: {}", tx.error()));
+
+        const auto ty = Check::number(L, 2);
+        if (!ty)
+            return Internal::configError(L, std::format("get_monitor_at: bad argument 2: {}", ty.error()));
+
+        x = *tx;
+        y = *ty;
     }
 
-    const auto PMONITOR = g_pCompositor->getMonitorFromVector(Vector2D{x, y});
+    const auto PMONITOR = State::monitorState()->query().vec(Vector2D{x, y}).run();
     if (!PMONITOR) {
         lua_pushnil(L);
         return 1;
@@ -257,7 +327,7 @@ static int hlGetMonitorAt(lua_State* L) {
 }
 
 static int hlGetMonitorAtCursor(lua_State* L) {
-    const auto PMONITOR = g_pCompositor->getMonitorFromCursor();
+    const auto PMONITOR = State::monitorState()->query().vec(Pointer::mgr()->untransformedPosition()).run();
     if (!PMONITOR) {
         lua_pushnil(L);
         return 1;
@@ -273,7 +343,7 @@ static int hlGetCursorPos(lua_State* L) {
         return 1;
     }
 
-    const auto pos = g_pInputManager->getMouseCoordsInternal();
+    const auto pos = Pointer::mgr()->untransformedPosition();
 
     lua_newtable(L);
     lua_pushnumber(L, pos.x);
@@ -289,7 +359,7 @@ static int hlGetLastWindow(lua_State* L) {
 
     for (auto it = fullHistory.rbegin(); it != fullHistory.rend(); ++it) {
         const auto candidate = it->lock();
-        if (!candidate || !candidate->m_isMapped)
+        if (!candidate || !candidate->mapped())
             continue;
 
         if (current && candidate == current)
@@ -316,10 +386,10 @@ static int hlGetLastWorkspace(lua_State* L) {
     auto previous = hadMonitorArg ? Desktop::History::workspaceTracker()->previousWorkspace(current, PMONITOR) : Desktop::History::workspaceTracker()->previousWorkspace(current);
 
     auto ws = previous.workspace.lock();
-    if ((!ws || ws->inert()) && previous.id != WORKSPACE_INVALID)
-        ws = g_pCompositor->getWorkspaceByID(previous.id);
+    if (!ws && previous.target.valid())
+        ws = State::Workspace::state()->find(previous.target);
 
-    if (!ws || ws->inert()) {
+    if (!ws) {
         lua_pushnil(L);
         return 1;
     }
@@ -340,7 +410,7 @@ static int hlGetLayers(lua_State* L) {
 
     lua_newtable(L);
     int i = 1;
-    for (const auto& mon : g_pCompositor->m_monitors) {
+    for (const auto& mon : State::monitorState()->monitors()) {
         if (query.monitor && mon != *query.monitor)
             continue;
 
@@ -378,6 +448,7 @@ static int hlGetCurrentSubmap(lua_State* L) {
 }
 
 void Internal::registerQueryBindings(lua_State* L) {
+    Internal::setFn(L, "get_devices", hlGetDevices);
     Internal::setFn(L, "get_windows", hlGetWindows);
     Internal::setFn(L, "get_window", hlGetWindow);
     Internal::setFn(L, "get_active_window", hlGetActiveWindow);

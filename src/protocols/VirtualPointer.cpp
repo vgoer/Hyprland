@@ -1,5 +1,6 @@
 #include "VirtualPointer.hpp"
 #include "core/Output.hpp"
+#include "../debug/log/Logger.hpp"
 
 CVirtualPointerV1Resource::CVirtualPointerV1Resource(SP<CZwlrVirtualPointerV1> resource_, PHLMONITORREF boundOutput_) : m_boundOutput(boundOutput_), m_resource(resource_) {
     if UNLIKELY (!good())
@@ -42,21 +43,28 @@ CVirtualPointerV1Resource::CVirtualPointerV1Resource(SP<CZwlrVirtualPointerV1> r
     });
 
     m_resource->setAxis([this](CZwlrVirtualPointerV1* r, uint32_t timeMs, uint32_t axis_, wl_fixed_t value) {
-        if UNLIKELY (m_axis > WL_POINTER_AXIS_HORIZONTAL_SCROLL) {
+        if UNLIKELY (axis_ > WL_POINTER_AXIS_HORIZONTAL_SCROLL) {
             r->error(ZWLR_VIRTUAL_POINTER_V1_ERROR_INVALID_AXIS, "Invalid axis");
             return;
         }
 
-        m_axis               = axis_;
-        m_axisEvents[m_axis] = IPointer::SAxisEvent{.timeMs = timeMs, .axis = sc<wl_pointer_axis>(m_axis), .delta = wl_fixed_to_double(value)};
+        if UNLIKELY (axis_ > m_axisEvents.size()) {
+            // this could silently happen if the protocol gets updated, in theory.
+            LOG(Log::ERR, "FIXME: Axis is accepted by protocol, but not accepted by backend.");
+            return;
+        }
+
+        m_axis                     = axis_;
+        m_axisEvents[m_axis]       = IPointer::SAxisEvent{.timeMs = timeMs, .axis = sc<wl_pointer_axis>(m_axis), .delta = wl_fixed_to_double(value)};
+        m_axisEventPending[m_axis] = true;
     });
 
     m_resource->setFrame([this](CZwlrVirtualPointerV1* r) {
-        for (auto& e : m_axisEvents) {
-            if (!e.timeMs)
+        for (size_t i = 0; i < m_axisEvents.size(); ++i) {
+            if (!m_axisEventPending[i])
                 continue;
-            m_events.axis.emit(e);
-            e.timeMs = 0;
+            m_events.axis.emit(m_axisEvents[i]);
+            m_axisEventPending[i] = false;
         }
 
         m_events.frame.emit();
@@ -65,8 +73,13 @@ CVirtualPointerV1Resource::CVirtualPointerV1Resource(SP<CZwlrVirtualPointerV1> r
     m_resource->setAxisSource([this](CZwlrVirtualPointerV1* r, uint32_t source) { m_axisEvents[m_axis].source = sc<wl_pointer_axis_source>(source); });
 
     m_resource->setAxisStop([this](CZwlrVirtualPointerV1* r, uint32_t timeMs, uint32_t axis_) {
-        if UNLIKELY (m_axis > WL_POINTER_AXIS_HORIZONTAL_SCROLL) {
+        if UNLIKELY (axis_ > WL_POINTER_AXIS_HORIZONTAL_SCROLL) {
             r->error(ZWLR_VIRTUAL_POINTER_V1_ERROR_INVALID_AXIS, "Invalid axis");
+            return;
+        }
+
+        if UNLIKELY (axis_ > m_axisEvents.size()) {
+            LOG(Log::ERR, "FIXME: Axis is accepted by protocol, but not accepted by backend.");
             return;
         }
 
@@ -75,11 +88,17 @@ CVirtualPointerV1Resource::CVirtualPointerV1Resource(SP<CZwlrVirtualPointerV1> r
         m_axisEvents[m_axis].axis          = sc<wl_pointer_axis>(m_axis);
         m_axisEvents[m_axis].delta         = 0;
         m_axisEvents[m_axis].deltaDiscrete = 0;
+        m_axisEventPending[m_axis]         = true;
     });
 
     m_resource->setAxisDiscrete([this](CZwlrVirtualPointerV1* r, uint32_t timeMs, uint32_t axis_, wl_fixed_t value, int32_t discrete) {
-        if UNLIKELY (m_axis > WL_POINTER_AXIS_HORIZONTAL_SCROLL) {
+        if UNLIKELY (axis_ > WL_POINTER_AXIS_HORIZONTAL_SCROLL) {
             r->error(ZWLR_VIRTUAL_POINTER_V1_ERROR_INVALID_AXIS, "Invalid axis");
+            return;
+        }
+
+        if UNLIKELY (axis_ > m_axisEvents.size()) {
+            LOG(Log::ERR, "FIXME: Axis is accepted by protocol, but not accepted by backend.");
             return;
         }
 
@@ -88,6 +107,7 @@ CVirtualPointerV1Resource::CVirtualPointerV1Resource(SP<CZwlrVirtualPointerV1> r
         m_axisEvents[m_axis].axis          = sc<wl_pointer_axis>(m_axis);
         m_axisEvents[m_axis].delta         = wl_fixed_to_double(value);
         m_axisEvents[m_axis].deltaDiscrete = discrete * 120;
+        m_axisEventPending[m_axis]         = true;
     });
 }
 
@@ -145,7 +165,7 @@ void CVirtualPointerProtocol::onCreatePointer(CZwlrVirtualPointerManagerV1* pMgr
         return;
     }
 
-    LOGM(Log::DEBUG, "New VPointer at id {}", id);
+    LOG(Log::DEBUG, "New VPointer at id {}", id);
 
     m_events.newPointer.emit(RESOURCE);
 }

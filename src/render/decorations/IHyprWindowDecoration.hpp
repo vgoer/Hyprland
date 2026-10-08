@@ -1,5 +1,10 @@
 #pragma once
 
+namespace Render {
+    class CRenderContext;
+    struct SWindowRenderPresentation;
+}
+
 #include <any>
 #include "../../defines.hpp"
 #include "../../helpers/math/Math.hpp"
@@ -27,8 +32,11 @@ enum eDecorationFlags : uint8_t {
     DECORATION_NON_SOLID           = 1 << 2, /* this decoration is not solid. Other decorations should draw on top of it. Example: shadow */
 };
 
-class CMonitor;
 class CDecorationPositioner;
+
+namespace Desktop::View {
+    class CWindowPresentation;
+}
 
 class IHyprWindowDecoration {
   public:
@@ -39,7 +47,7 @@ class IHyprWindowDecoration {
 
     virtual void                       onPositioningReply(const SDecorationPositioningReply& reply) = 0;
 
-    virtual void                       draw(PHLMONITOR, float const& a) = 0;
+    virtual void                       draw(Render::CRenderContext& ctx, PHLMONITOR, float const& a, const Render::SWindowRenderPresentation& presentation) = 0;
 
     virtual eDecorationType            getDecorationType() = 0;
 
@@ -55,8 +63,21 @@ class IHyprWindowDecoration {
 
     virtual std::string                getDisplayName();
 
+    virtual void                       initializeAnimations();
+    virtual void                       updateState();
+    virtual void                       onWindowMap();
+    virtual void                       onWindowFocus();
+
+  protected:
+    PHLWINDOW                 owningWindow() const;
+    SP<IHyprWindowDecoration> self() const;
+
   private:
-    PHLWINDOWREF m_window;
+    void                      setSelf(const SP<IHyprWindowDecoration>& self);
+
+    PHLWINDOWREF              m_window;
+    WP<IHyprWindowDecoration> m_self;
 
     friend class CDecorationPositioner;
+    friend class Desktop::View::CWindowPresentation;
 };

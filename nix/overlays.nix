@@ -56,7 +56,7 @@ in
     in
     {
       hyprland = final.callPackage ./default.nix {
-        stdenv = final.gcc15Stdenv;
+        stdenv = final.gcc16Stdenv;
         commit = self.rev or "";
         revCount = self.sourceInfo.revCount or "";
         inherit date version;
@@ -84,7 +84,7 @@ in
 
       hyprland-hidpi = builtins.trace ''
         hyprland-hidpi was removed. Please use the hyprland package.
-        For more information, refer to https://wiki.hypr.land/Configuring/XWayland.
+        For more information, refer to https://wiki.hypr.land/configuring/extra/xwayland/.
       '' final.hyprland;
     };
 

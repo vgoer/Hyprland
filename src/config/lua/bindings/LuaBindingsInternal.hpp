@@ -14,10 +14,10 @@
 
 #include "../../../Compositor.hpp"
 #include "../../../helpers/MiscFunctions.hpp"
-#include "../../../helpers/Monitor.hpp"
+#include "../../../output/Monitor.hpp"
 #include "../../../desktop/state/FocusState.hpp"
 #include "../../../desktop/rule/windowRule/WindowRuleEffectContainer.hpp"
-#include "../../../managers/KeybindManager.hpp"
+#include "../../../keybinds/Manager.hpp"
 #include "../../shared/actions/ConfigActions.hpp"
 
 #include <functional>
@@ -39,14 +39,14 @@ namespace Desktop::Rule {
 namespace Config::Lua::Bindings::Internal {
 
     struct SWindowRuleEffectDesc {
-        const char*                       name;
-        std::function<ILuaConfigValue*()> factory;
-        uint16_t                          effect;
+        const char* name;
+        ILuaConfigValue* (*factory)();
+        uint16_t effect;
     };
 
     using WE = Desktop::Rule::eWindowRuleEffect;
 
-    inline const SWindowRuleEffectDesc WINDOW_RULE_EFFECT_DESCS[] = {
+    inline constexpr SWindowRuleEffectDesc WINDOW_RULE_EFFECT_DESCS[] = {
         {"float", []() -> ILuaConfigValue* { return new CLuaConfigBool(false); }, WE::WINDOW_RULE_EFFECT_FLOAT},
         {"tile", []() -> ILuaConfigValue* { return new CLuaConfigBool(false); }, WE::WINDOW_RULE_EFFECT_TILE},
         {"fullscreen", []() -> ILuaConfigValue* { return new CLuaConfigBool(false); }, WE::WINDOW_RULE_EFFECT_FULLSCREEN},
@@ -65,7 +65,7 @@ namespace Config::Lua::Bindings::Internal {
         {"content", []() -> ILuaConfigValue* { return new CLuaConfigString(STRVAL_EMPTY); }, WE::WINDOW_RULE_EFFECT_CONTENT},
         {"no_close_for", []() -> ILuaConfigValue* { return new CLuaConfigInt(0); }, WE::WINDOW_RULE_EFFECT_NOCLOSEFOR},
         {"scrolling_width", []() -> ILuaConfigValue* { return new CLuaConfigFloat(0.F); }, WE::WINDOW_RULE_EFFECT_SCROLLING_WIDTH},
-        {"rounding", []() -> ILuaConfigValue* { return new CLuaConfigInt(0, 0, 20); }, WE::WINDOW_RULE_EFFECT_ROUNDING},
+        {"rounding", []() -> ILuaConfigValue* { return new CLuaConfigInt(0, 0, 100); }, WE::WINDOW_RULE_EFFECT_ROUNDING},
         {"border_size", []() -> ILuaConfigValue* { return new CLuaConfigInt(0); }, WE::WINDOW_RULE_EFFECT_BORDER_SIZE},
         {"rounding_power", []() -> ILuaConfigValue* { return new CLuaConfigFloat(2.F, 1.F, 10.F); }, WE::WINDOW_RULE_EFFECT_ROUNDING_POWER},
         {"scroll_mouse", []() -> ILuaConfigValue* { return new CLuaConfigFloat(1.F, 0.01F, 10.F); }, WE::WINDOW_RULE_EFFECT_SCROLL_MOUSE},
@@ -91,6 +91,8 @@ namespace Config::Lua::Bindings::Internal {
         {"no_follow_mouse", []() -> ILuaConfigValue* { return new CLuaConfigBool(false); }, WE::WINDOW_RULE_EFFECT_NO_FOLLOW_MOUSE},
         {"no_max_size", []() -> ILuaConfigValue* { return new CLuaConfigBool(false); }, WE::WINDOW_RULE_EFFECT_NO_MAX_SIZE},
         {"no_shadow", []() -> ILuaConfigValue* { return new CLuaConfigBool(false); }, WE::WINDOW_RULE_EFFECT_NO_SHADOW},
+        {"no_glow", []() -> ILuaConfigValue* { return new CLuaConfigBool(false); }, WE::WINDOW_RULE_EFFECT_NO_GLOW},
+        {"no_wobble", []() -> ILuaConfigValue* { return new CLuaConfigBool(false); }, WE::WINDOW_RULE_EFFECT_NO_WOBBLE},
         {"no_shortcuts_inhibit", []() -> ILuaConfigValue* { return new CLuaConfigBool(false); }, WE::WINDOW_RULE_EFFECT_NO_SHORTCUTS_INHIBIT},
         {"opaque", []() -> ILuaConfigValue* { return new CLuaConfigBool(false); }, WE::WINDOW_RULE_EFFECT_OPAQUE},
         {"force_rgbx", []() -> ILuaConfigValue* { return new CLuaConfigBool(false); }, WE::WINDOW_RULE_EFFECT_FORCE_RGBX},
@@ -100,8 +102,11 @@ namespace Config::Lua::Bindings::Internal {
         {"render_unfocused", []() -> ILuaConfigValue* { return new CLuaConfigBool(false); }, WE::WINDOW_RULE_EFFECT_RENDER_UNFOCUSED},
         {"no_screen_share", []() -> ILuaConfigValue* { return new CLuaConfigBool(false); }, WE::WINDOW_RULE_EFFECT_NO_SCREEN_SHARE},
         {"no_vrr", []() -> ILuaConfigValue* { return new CLuaConfigBool(false); }, WE::WINDOW_RULE_EFFECT_NO_VRR},
+        {"no_auto_hdr", []() -> ILuaConfigValue* { return new CLuaConfigBool(false); }, WE::WINDOW_RULE_EFFECT_NO_AUTO_HDR},
         {"stay_focused", []() -> ILuaConfigValue* { return new CLuaConfigBool(false); }, WE::WINDOW_RULE_EFFECT_STAY_FOCUSED},
         {"confine_pointer", []() -> ILuaConfigValue* { return new CLuaConfigBool(false); }, WE::WINDOW_RULE_EFFECT_CONFINE_POINTER},
+        {"no_xdg_drags", []() -> ILuaConfigValue* { return new CLuaConfigBool(false); }, WE::WINDOW_RULE_EFFECT_NO_XDG_DRAGS},
+        {"tonemap", []() -> ILuaConfigValue* { return new CLuaConfigString(STRVAL_EMPTY); }, WE::WINDOW_RULE_EFFECT_TONEMAP},
     };
 
     std::string                                        argStr(lua_State* L, int idx);
@@ -137,7 +142,6 @@ namespace Config::Lua::Bindings::Internal {
     int                                                pushSuccessResult(lua_State* L, const Config::Actions::SActionResult& r = {});
     int                                                pushErrorResult(lua_State* L, const Config::Actions::SActionError& e);
     void                                               reportError(lua_State* L, const Config::Actions::SActionError& e);
-    PHLWORKSPACE                                       resolveWorkspaceStr(const std::string& args);
     PHLMONITOR                                         resolveMonitorStr(const std::string& args);
     std::string                                        getSourceInfo(lua_State* L, int stackLevel = 1);
 
@@ -179,11 +183,11 @@ namespace Config::Lua::Bindings::Internal {
         return nullptr;
     }
 
-    void setFn(lua_State* L, const char* name, lua_CFunction fn);
-    void setMgrFn(lua_State* L, CConfigManager* mgr, const char* name, lua_CFunction fn);
-    void markDispatcherTable(lua_State* L);
-    int  wrapDispatcher(lua_State* L);
-    bool pushDispatcherFunction(lua_State* L, int idx);
+    void                             setFn(lua_State* L, const char* name, lua_CFunction fn);
+    void                             setMgrFn(lua_State* L, CConfigManager* mgr, const char* name, lua_CFunction fn);
+    void                             setDispatcherFn(lua_State* L, const char* name, lua_CFunction fn, int maxArgs);
+    int                              wrapDispatcher(lua_State* L);
+    std::expected<void, std::string> pushDispatcherFunction(lua_State* L, int idx);
 
     template <typename T>
     SParseError parseTableField(lua_State* L, int tableIdx, const char* field, T& parser) {

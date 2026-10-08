@@ -11,6 +11,7 @@
 #include <hyprutils/math/Vector2D.hpp>
 
 namespace Render {
+    class CSceneResources;
     const std::vector<const char*> ASSET_PATHS = {
 #ifdef DATAROOTDIR
         DATAROOTDIR,
@@ -39,6 +40,18 @@ namespace Render {
         RENDER_MODE_TO_BUFFER_READ_ONLY = 3,
     };
 
+    struct SRenderOptions {
+        float               mouseZoomFactor    = 1.f;
+        bool                mouseZoomUseMouse  = true;
+        bool                useNearestNeighbor = false;
+        SP<CSceneResources> sceneResources;
+    };
+
+    struct SRenderResult {
+        // Damage after finalization, before the output transform.
+        CRegion finalDamage;
+    };
+
     struct SRenderWorkspaceUntilData {
         PHLLS     ls;
         PHLWINDOW w;
@@ -46,7 +59,7 @@ namespace Render {
 
     enum eRenderProjectionType : uint8_t {
         RPT_MONITOR,
-        RPT_MIRROR,
+        RPT_OUTPUT,
         RPT_FB,
         RPT_EXPORT,
     };
@@ -86,7 +99,7 @@ namespace Render {
         SP<IFramebuffer>          outFB     = nullptr; // out to render to (if offloaded, etc)
 
         CRegion                   damage;
-        CRegion                   finalDamage; // damage used for funal off -> main
+        CRegion                   finalDamage; // damage used for final off -> main
 
         SRenderModifData          renderModif;
         float                     mouseZoomFactor    = 1.f;
@@ -102,8 +115,9 @@ namespace Render {
         PHLWINDOWREF           currentWindow;
         WP<CWLSurfaceResource> surface;
 
-        bool                   transformDamage = true;
-        bool                   noSimplify      = false;
+        bool                   transformDamage            = true;
+        bool                   noSimplify                 = false;
+        bool                   renderingTransformedSource = false;
     };
 
     struct STFRange {
@@ -121,6 +135,7 @@ namespace Render {
         std::array<std::array<double, 3>, 3> convertMatrix;
 
         bool                                 needsTonemap    = false;
+        int                                  tonemapMode     = 1; // 1 - default, 2 - clamp, 3 - limited
         float                                maxLuminance    = 80;
         float                                dstMaxLuminance = 80;
         std::array<std::array<double, 3>, 3> dstPrimaries2XYZ;

@@ -1,5 +1,9 @@
 #pragma once
 
+namespace Render {
+    class CRenderContext;
+}
+
 /*
     Implementations for:
      - wl_data_offer
@@ -10,6 +14,7 @@
 
 #include <vector>
 #include <cstdint>
+#include <optional>
 #include "../WaylandProtocol.hpp"
 #include <wayland-server-protocol.h>
 #include "wayland.hpp"
@@ -25,7 +30,6 @@ class CWLDataSourceResource;
 class CWLDataOfferResource;
 
 class CWLSurfaceResource;
-class CMonitor;
 
 class CWLDataOfferResource : public IDataOffer {
   public:
@@ -139,7 +143,7 @@ class CWLDataDeviceProtocol : public IWaylandProtocol {
     virtual void bindManager(wl_client* client, void* data, uint32_t ver, uint32_t id);
 
     // renders and damages the dnd icon, if present
-    void renderDND(PHLMONITOR pMonitor, const Time::steady_tp& when);
+    void renderDND(Render::CRenderContext& ctx, PHLMONITOR pMonitor, const Time::steady_tp& when);
     // for inputmgr to force refocus
     // TODO: move handling to seatmgr
     bool dndActive();
@@ -169,13 +173,14 @@ class CWLDataDeviceProtocol : public IWaylandProtocol {
     void onDndPointerFocus();
 
     struct {
-        WP<IDataDevice>        focusedDevice;
-        WP<IDataSource>        currentSource;
-        WP<CWLSurfaceResource> dndSurface;
-        WP<CWLSurfaceResource> originSurface;
-        bool                   overriddenCursor = false;
-        CHyprSignalListener    dndSurfaceDestroy;
-        CHyprSignalListener    dndSurfaceCommit;
+        WP<IDataDevice>         focusedDevice;
+        WP<IDataSource>         currentSource;
+        WP<CWLSurfaceResource>  dndSurface;
+        WP<CWLSurfaceResource>  originSurface;
+        std::optional<Vector2D> touchPos;
+        bool                    overriddenCursor = false;
+        CHyprSignalListener     dndSurfaceDestroy;
+        CHyprSignalListener     dndSurfaceCommit;
 
         // for ending a dnd
         CHyprSignalListener mouseMove;

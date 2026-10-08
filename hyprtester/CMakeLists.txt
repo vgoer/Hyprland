@@ -17,7 +17,7 @@ add_executable(hyprtester ${SRCFILES})
 add_custom_command(
   TARGET hyprtester
   POST_BUILD
-  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/plugin/build.sh
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/plugin/build.sh "${LUA_INCLUDE_DIRS}"
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/plugin)
 
 target_link_libraries(hyprtester PUBLIC PkgConfig::hyprtester_deps)
@@ -25,6 +25,9 @@ target_link_libraries(hyprtester PUBLIC PkgConfig::hyprtester_deps)
 install(TARGETS hyprtester)
 
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/test.lua
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/hypr)
+
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/lua-require
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/hypr)
 
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/plugin/hyprtestplugin.so
@@ -48,7 +51,7 @@ pkg_check_modules(
   IMPORTED_TARGET
   hyprutils>=0.8.0
   wayland-client
-  wayland-protocols>=1.47
+  wayland-protocols>=1.49
 )
 
 pkg_get_variable(WAYLAND_PROTOCOLS_DIR wayland-protocols pkgdatadir)
@@ -66,7 +69,11 @@ add_custom_command(
 
 function(protocolNew protoPath protoName external)
   if(external)
-    set(path ${CMAKE_CURRENT_SOURCE_DIR}/${protoPath})
+    if(IS_ABSOLUTE "${protoPath}")
+      set(path "${protoPath}")
+    else()
+      set(path "${CMAKE_CURRENT_SOURCE_DIR}/${protoPath}")
+    endif()
   else()
     set(path ${WAYLAND_PROTOCOLS_DIR}/${protoPath})
   endif()
@@ -95,10 +102,23 @@ function(clientNew sourceName)
 endfunction()
 
 protocolnew("staging/pointer-warp" "pointer-warp-v1" false)
+protocolnew("staging/fractional-scale" "fractional-scale-v1" false)
 protocolnew("stable/xdg-shell" "xdg-shell" false)
+protocolnew("staging/xdg-activation" "xdg-activation-v1" false)
 protocolnew("unstable/keyboard-shortcuts-inhibit" "keyboard-shortcuts-inhibit-unstable-v1" false)
+protocolnew("../protocols" "wlr-foreign-toplevel-management-unstable-v1" true)
+protocolnew("${HYPRLAND_PROTOCOLS}/protocols" "hyprland-toplevel-export-v1" true)
 
 clientNew("pointer-warp" PROTOS "pointer-warp-v1" "xdg-shell")
+clientNew("surface-scale-transform" PROTOS "fractional-scale-v1" "xdg-shell")
 clientNew("pointer-scroll" PROTOS "xdg-shell")
 clientNew("child-window" PROTOS "xdg-shell")
+clientNew("xdg-interactive" PROTOS "xdg-shell")
+clientNew("xdg-activation" PROTOS "xdg-shell" "xdg-activation-v1")
 clientNew("shortcut-inhibitor" PROTOS "xdg-shell" "keyboard-shortcuts-inhibit-unstable-v1")
+clientNew("keyboard-modifiers" PROTOS "xdg-shell")
+clientNew("fullscreen-with-monitor" PROTOS "xdg-shell")
+clientNew("xdg-initial-maximize" PROTOS "xdg-shell")
+clientNew("popup-render" PROTOS "xdg-shell")
+clientNew("wlr-foreign-toplevel" PROTOS "wlr-foreign-toplevel-management-unstable-v1")
+clientNew("toplevel-capture" PROTOS "wlr-foreign-toplevel-management-unstable-v1" "hyprland-toplevel-export-v1")

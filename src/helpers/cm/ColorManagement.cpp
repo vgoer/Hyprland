@@ -72,9 +72,9 @@ const Hyprgraphics::CMatrix3& CPrimaries::toXYZ() const {
 }
 
 const Hyprgraphics::CMatrix3& CPrimaries::convertMatrix(const WP<const CPrimaries> dst) const {
-    const auto cacheKey = std::make_pair(m_id, dst->m_id);
+    const auto cacheKey = std::pair{m_id, dst->m_id};
     if (!primariesConversion.contains(cacheKey))
-        primariesConversion.insert(std::make_pair(cacheKey, m_primaries.convertMatrix(dst->m_primaries)));
+        primariesConversion.emplace(cacheKey, m_primaries.convertMatrix(dst->m_primaries));
 
     return primariesConversion[cacheKey];
 }
@@ -485,15 +485,11 @@ static RGBAColor saturate(RGBAColor color, std::array<std::array<double, 3>, 3> 
 }
 
 static RGBAColor tonemap(RGBAColor color, std::array<std::array<double, 3>, 3> dstXYZ, float maxLuminance, float dstMaxLuminance, float dstRefLuminance, float srcRefLuminance) {
-    // TODO source color is expected to be in sRGB colorspace and tonamepping shouldn't be needed
+    // TODO source color is expected to be in sRGB colorspace and tonemapping shouldn't be needed
     return color;
 }
 
-RGBAColor NColorManagement::convertColor(RGBAColor color, PImageDescription srcDesc, PImageDescription dstDesc) {
-    const auto settings =
-        g_pHyprRenderer->getCMSettings(srcDesc, dstDesc, nullptr, true, g_pHyprRenderer->m_renderData.pMonitor ? g_pHyprRenderer->m_renderData.pMonitor->m_sdrMinLuminance : -1,
-                                       g_pHyprRenderer->m_renderData.pMonitor ? g_pHyprRenderer->m_renderData.pMonitor->m_sdrMaxLuminance : -1);
-
+RGBAColor NColorManagement::convertColor(RGBAColor color, PImageDescription srcDesc, PImageDescription dstDesc, const Render::SCMSettings& settings) {
     color /= std::max(color.c.a, 0.001);
     color = toLinearRGB(color, srcDesc->value().transferFunction);
     if (dstDesc->value().icc.present) {
@@ -520,8 +516,8 @@ RGBAColor NColorManagement::convertColor(RGBAColor color, PImageDescription srcD
     return color;
 }
 
-CHyprColor NColorManagement::convertColor(const CHyprColor& color, PImageDescription srcDesc, PImageDescription dstDesc) {
-    const auto& converted = convertColor(RGBAColor{{.r = color.r, .g = color.g, .b = color.b, .a = color.a}}, srcDesc, dstDesc);
+CHyprColor NColorManagement::convertColor(const CHyprColor& color, PImageDescription srcDesc, PImageDescription dstDesc, const Render::SCMSettings& settings) {
+    const auto& converted = convertColor(RGBAColor{{.r = color.r, .g = color.g, .b = color.b, .a = color.a}}, srcDesc, dstDesc, settings);
     return CHyprColor(converted.c.r, converted.c.g, converted.c.b, converted.c.a);
 }
 

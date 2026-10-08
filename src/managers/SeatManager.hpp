@@ -5,6 +5,7 @@
 #include "../helpers/signal/Signal.hpp"
 #include "../helpers/math/Math.hpp"
 #include "../protocols/types/DataDevice.hpp"
+#include "../devices/IKeyboard.hpp"
 #include <vector>
 
 constexpr size_t MAX_SERIAL_STORE_LEN = 100;
@@ -12,7 +13,34 @@ constexpr size_t MAX_SERIAL_STORE_LEN = 100;
 class CWLSurfaceResource;
 class CWLSeatResource;
 class IPointer;
-class IKeyboard;
+
+class IKeyboardEventHandler {
+  public:
+    virtual ~IKeyboardEventHandler() = default;
+
+    virtual void onKeyboardKey(const IKeyboard::SKeyEvent& event, SP<IKeyboard> keyboard) = 0;
+};
+
+class CKeyboardEventHandlerStack {
+  public:
+    void push(WP<IKeyboardEventHandler> handler);
+    bool remove(WP<IKeyboardEventHandler> handler);
+
+    bool dispatch(const IKeyboard::SKeyEvent& event, SP<IKeyboard> keyboard, bool allowNewPress);
+    void onKeyboardRemoved(SP<IKeyboard> keyboard);
+
+  private:
+    struct SOwnedKey {
+        WP<IKeyboard>             keyboard;
+        uint32_t                  keycode = 0;
+        WP<IKeyboardEventHandler> handler;
+    };
+
+    void                                   pruneHandlers();
+
+    std::vector<WP<IKeyboardEventHandler>> m_handlers;
+    std::vector<SOwnedKey>                 m_ownedKeys;
+};
 
 /*
     A seat grab defines a restricted set of surfaces that can be focused.
@@ -46,37 +74,42 @@ class CSeatManager {
   public:
     CSeatManager();
 
-    void     updateCapabilities(uint32_t capabilities); // in IHID caps
+    void                       updateCapabilities(uint32_t capabilities); // in IHID caps
 
-    void     setMouse(SP<IPointer> mouse);
-    void     setKeyboard(SP<IKeyboard> keeb);
-    void     updateActiveKeyboardData(); // updates the clients with the keymap and repeat info
+    void                       setMouse(SP<IPointer> mouse);
+    void                       setKeyboard(SP<IKeyboard> keeb);
+    void                       updateActiveKeyboardData(); // updates the clients with the keymap and repeat info
 
-    void     setKeyboardFocus(SP<CWLSurfaceResource> surf);
-    void     sendKeyboardKey(uint32_t timeMs, uint32_t key, wl_keyboard_key_state state);
-    void     sendKeyboardMods(uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group);
+    void                       setKeyboardFocus(SP<CWLSurfaceResource> surf);
+    void                       sendKeyboardKey(uint32_t timeMs, uint32_t key, wl_keyboard_key_state state);
+    void                       sendKeyboardMods(uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group);
 
-    void     setPointerFocus(SP<CWLSurfaceResource> surf, const Vector2D& local);
-    void     sendPointerMotion(uint32_t timeMs, const Vector2D& local);
-    void     sendPointerButton(uint32_t timeMs, uint32_t key, wl_pointer_button_state state);
-    void     sendPointerFrame();
-    void     sendPointerFrame(WP<CWLSeatResource> pResource);
-    void     sendPointerAxis(uint32_t timeMs, wl_pointer_axis axis, double value, int32_t discrete, int32_t value120, wl_pointer_axis_source source,
-                             wl_pointer_axis_relative_direction relative);
+    CKeyboardEventHandlerStack m_keyboardEventHandlers;
 
-    void     sendTouchDown(SP<CWLSurfaceResource> surf, uint32_t timeMs, int32_t id, const Vector2D& local);
-    void     sendTouchUp(uint32_t timeMs, int32_t id);
-    void     sendTouchMotion(uint32_t timeMs, int32_t id, const Vector2D& local);
-    void     sendTouchFrame();
-    void     sendTouchCancel();
-    void     sendTouchShape(int32_t id, const Vector2D& shape);
-    void     sendTouchOrientation(int32_t id, double angle);
+    void                       setPointerFocus(SP<CWLSurfaceResource> surf, const Vector2D& local);
+    void                       sendPointerMotion(uint32_t timeMs, const Vector2D& local);
+    void                       sendPointerButton(uint32_t timeMs, uint32_t key, wl_pointer_button_state state);
+    void                       sendPointerFrame();
+    void                       sendPointerFrame(WP<CWLSeatResource> pResource);
+    void                       sendPointerAxis(uint32_t timeMs, wl_pointer_axis axis, double value, int32_t discrete, int32_t value120, wl_pointer_axis_source source,
+                                               wl_pointer_axis_relative_direction relative);
 
-    void     resendEnterEvents();
+    void                       sendTouchDown(SP<CWLSurfaceResource> surf, uint32_t timeMs, int32_t id, const Vector2D& local);
+    void                       sendTouchUp(uint32_t timeMs, int32_t id);
+    void                       sendTouchMotion(uint32_t timeMs, int32_t id, const Vector2D& local);
+    void                       sendTouchFrame();
+    void                       sendTouchCancel();
+    void                       sendTouchShape(int32_t id, const Vector2D& shape);
+    void                       sendTouchOrientation(int32_t id, double angle);
 
-    uint32_t nextSerial(SP<CWLSeatResource> seatResource);
+    void                       resendEnterEvents();
+
+    uint32_t                   nextSerial(SP<CWLSeatResource> seatResource, bool enter = false);
     // pops the serial if it was valid, meaning it is consumed.
     bool                serialValid(SP<CWLSeatResource> seatResource, uint32_t serial, bool erase = true);
+    void                recordPointerButtonSerial(SP<CWLSeatResource> seatResource, uint32_t serial, SP<CWLSurfaceResource> surface, uint32_t button);
+    void                clearPointerButtonSerials(SP<CWLSeatResource> seatResource, SP<CWLSurfaceResource> surface, uint32_t button);
+    bool                pointerButtonSerialValid(SP<CWLSeatResource> seatResource, uint32_t serial, SP<CWLSurfaceResource> surface, bool erase = true);
 
     void                onSetCursor(SP<CWLSeatResource> seatResource, uint32_t serial, SP<CWLSurfaceResource> surf, const Vector2D& hotspot);
 
@@ -128,11 +161,19 @@ class CSeatManager {
     SP<CSeatGrab> m_seatGrab;
 
   private:
+    struct SPointerButtonSerial {
+        uint32_t               serial = 0;
+        uint32_t               button = 0;
+        WP<CWLSurfaceResource> surface;
+    };
+
     struct SSeatResourceContainer {
         SSeatResourceContainer(SP<CWLSeatResource>);
 
-        WP<CWLSeatResource>   resource;
-        std::vector<uint32_t> serials; // old -> new
+        WP<CWLSeatResource>               resource;
+        uint32_t                          enterSerial = 0; // remember this forever
+        std::vector<uint32_t>             serials;         // old -> new
+        std::vector<SPointerButtonSerial> pointerButtonSerials;
 
         struct {
             CHyprSignalListener destroy;

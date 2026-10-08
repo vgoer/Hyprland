@@ -38,7 +38,7 @@ namespace Config::Values {
                     allowed += std::format("\"{}\", ", e);
                 }
 
-                allowed = allowed.substr(0, allowed.size() - 2);
+                allowed.resize(allowed.size() - 2);
 
                 return std::unexpected(std::format("bad value \"{}\", allowed values are: {}", v, allowed));
             }
@@ -157,12 +157,17 @@ namespace Config::Values {
         "input:touchdevice:output",
         "input:tablet:output",
         "input:touchdevice:enabled",
+        "input:tablet:enabled",
         "input:tablet:region_position",
         "input:tablet:absolute_region_position",
         "input:tablet:region_size",
         "input:tablet:relative_input",
         "input:tablet:active_area_position",
         "input:tablet:active_area_size",
+        "input:tablettool:eraser_button_mode",
+        "input:tablettool:eraser_button_override",
+        "input:tablettool:pressure_range_min",
+        "input:tablettool:pressure_range_max",
         "input:touchpad:flip_x",
         "input:touchpad:flip_y",
         "input:touchpad:drag_3fg",

@@ -4,15 +4,16 @@
 #include <hyprutils/memory/WeakPtr.hpp>
 #include <sys/types.h>
 
-#include "../Log.hpp"
-
 //NOLINTNEXTLINE
 namespace Tests {
+    [[nodiscard("Check whether kitty was spawned successfully or use the SPAWN_KITTY macro")]]
     Hyprutils::Memory::CUniquePointer<Hyprutils::OS::CProcess> spawnKitty(const std::string& class_ = "", const std::vector<std::string> args = {});
+    [[nodiscard("Check whether kitty was spawned successfully or use the SPAWN_LAYER_KITTY macro")]]
     Hyprutils::Memory::CUniquePointer<Hyprutils::OS::CProcess> spawnLayerKitty(const std::string& namespace_ = "", const std::vector<std::string> args = {});
     bool                                                       processAlive(pid_t pid);
     int                                                        windowCount();
     int                                                        countOccurrences(const std::string& in, const std::string& what);
+    void                                                       sync(int rounds = 3);
     bool                                                       killAllWindows();
     void                                                       waitUntilWindowsN(int n);
     int                                                        layerCount();

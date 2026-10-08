@@ -109,10 +109,8 @@ add_compile_options(
   -Wno-unused-parameter
   -Wno-unused-value
   -Wno-missing-field-initializers
-  -Wno-gnu-zero-variadic-macro-arguments
   -Wno-narrowing
   -Wno-pointer-arith
-  -Wno-clobbered
   -frtti
   -fmacro-prefix-map=${CMAKE_SOURCE_DIR}/=)
 
@@ -130,10 +128,26 @@ set(GLES_VERSION "GLES3")
 find_package(OpenGL REQUIRED COMPONENTS ${GLES_VERSION})
 find_package(glslang CONFIG REQUIRED)
 
-set(AQUAMARINE_MINIMUM_VERSION 0.9.3)
+find_package(glaze QUIET)
+if(NOT CMAKE_SYSTEM_NAME MATCHES "OpenBSD")
+  if(NOT glaze_FOUND)
+    set(GLAZE_VERSION v7.2.0)
+    message(STATUS "glaze dependency not found, retrieving ${GLAZE_VERSION} with FetchContent")
+    include(FetchContent)
+    FetchContent_Declare(
+      glaze
+      GIT_REPOSITORY https://github.com/stephenberry/glaze.git
+      GIT_TAG ${GLAZE_VERSION}
+      GIT_SHALLOW TRUE
+      EXCLUDE_FROM_ALL)
+    FetchContent_MakeAvailable(glaze)
+  endif()
+endif()
+
+set(AQUAMARINE_MINIMUM_VERSION 0.15.0)
 set(HYPRLANG_MINIMUM_VERSION 0.6.7)
 set(HYPRCURSOR_MINIMUM_VERSION 0.1.7)
-set(HYPRUTILS_MINIMUM_VERSION 0.13.1)
+set(HYPRUTILS_MINIMUM_VERSION 0.14.0)
 set(HYPRGRAPHICS_MINIMUM_VERSION 0.5.1)
 
 pkg_check_modules(aquamarine_dep REQUIRED IMPORTED_TARGET aquamarine>=${AQUAMARINE_MINIMUM_VERSION})
@@ -249,11 +263,10 @@ set_source_files_properties(${CMAKE_SOURCE_DIR}/src/version.h PROPERTIES GENERAT
 
 set(XKBCOMMON_MINIMUM_VERSION 1.11.0)
 set(WAYLAND_SERVER_MINIMUM_VERSION 1.22.91)
-set(WAYLAND_SERVER_PROTOCOLS_MINIMUM_VERSION 1.47)
-set(LIBINPUT_MINIMUM_VERSION 1.28)
+set(WAYLAND_SERVER_PROTOCOLS_MINIMUM_VERSION 1.49)
+set(LIBINPUT_MINIMUM_VERSION 1.29)
 
-pkg_check_modules(
-  deps
+pkg_check_modules(deps
   REQUIRED
   IMPORTED_TARGET GLOBAL
   xkbcommon>=${XKBCOMMON_MINIMUM_VERSION}
@@ -267,11 +280,13 @@ pkg_check_modules(
   xcursor
   libdrm
   libinput>=${LIBINPUT_MINIMUM_VERSION}
+  libeis-1.0
   gbm
   gio-2.0
   re2
   muparser
   lcms2
+  libcanberra
 )
 
 pkg_search_module(LUA REQUIRED IMPORTED_TARGET GLOBAL lua55 lua5.5 lua-55 lua-5.5 lua>=5.5 lua<5.6)
@@ -294,6 +309,7 @@ target_link_libraries(Hyprland hyprland_lib)
 
 target_include_directories(hyprland_lib PUBLIC ${deps_INCLUDE_DIRS} ${LUA_INCLUDE_DIRS})
 target_include_directories(Hyprland PUBLIC ${deps_INCLUDE_DIRS} ${LUA_INCLUDE_DIRS})
+target_link_libraries(hyprland_lib PRIVATE glaze::glaze)
 
 set(USE_GPROF OFF)
 
@@ -360,6 +376,15 @@ if(NOT HAS_INOTIFY AND inotify_FOUND)
   target_link_libraries(hyprland_lib PUBLIC PkgConfig::inotify)
 endif()
 
+# sdbus-c++ is used to ask rtkit for realtime scheduling which is Linux-only
+if(NO_RTKIT OR NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  message(STATUS "rtkit realtime scheduling is disabled!")
+else()
+  pkg_check_modules(sdbus_dep REQUIRED IMPORTED_TARGET sdbus-c++>=2.0.0)
+  target_link_libraries(hyprland_lib PUBLIC PkgConfig::sdbus_dep)
+  add_compile_definitions(HAS_RTKIT)
+endif()
+
 if(NO_XWAYLAND)
   message(STATUS "Using the NO_XWAYLAND flag, disabling XWayland!")
   add_compile_definitions(NO_XWAYLAND)
@@ -393,6 +418,9 @@ if(NO_SYSTEMD)
 else()
   message(STATUS "SYSTEMD support is requested (NO_SYSTEMD not defined)...")
   add_compile_definitions(USES_SYSTEMD)
+
+  install(FILES ${CMAKE_SOURCE_DIR}/systemd/hyprland-session.target
+          DESTINATION ${CMAKE_INSTALL_LIBDIR}/systemd/user)
 
   # session file -uwsm
   if(NO_UWSM)
@@ -514,12 +542,12 @@ else()
   target_link_libraries(hyprland_lib PUBLIC OpenGL::EGL OpenGL::GLES3 glslang::glslang glslang::glslang-default-resource-limits glslang::SPIRV Threads::Threads)
 endif()
 
-pkg_check_modules(hyprland_protocols_dep hyprland-protocols>=0.6.4)
+pkg_check_modules(hyprland_protocols_dep hyprland-protocols>=0.7.1)
 if(hyprland_protocols_dep_FOUND)
   pkg_get_variable(HYPRLAND_PROTOCOLS hyprland-protocols pkgdatadir)
   message(STATUS "hyprland-protocols dependency set to ${HYPRLAND_PROTOCOLS}")
 else()
-  set(HYPRLAND_PROTOCOLS "subprojects/hyprland-protocols")
+  set(HYPRLAND_PROTOCOLS "${CMAKE_SOURCE_DIR}/subprojects/hyprland-protocols")
   message(STATUS "hyprland-protocols subproject set to ${HYPRLAND_PROTOCOLS}")
 endif()
 
@@ -537,6 +565,7 @@ protocolnew("protocols" "wlr-virtual-pointer-unstable-v1" true)
 protocolnew("protocols" "input-method-unstable-v2" true)
 protocolnew("protocols" "wlr-output-management-unstable-v1" true)
 protocolnew("protocols" "kde-server-decoration" true)
+protocolnew("protocols" "vicinae-hotkey-v1" true)
 protocolnew("protocols" "wlr-data-control-unstable-v1" true)
 protocolnew("${HYPRLAND_PROTOCOLS}/protocols" "hyprland-focus-grab-v1" true)
 protocolnew("protocols" "wlr-layer-shell-unstable-v1" true)
@@ -590,7 +619,10 @@ protocolnew("staging/fifo" "fifo-v1" false)
 protocolnew("staging/commit-timing" "commit-timing-v1" false)
 protocolnew("staging/ext-image-capture-source" "ext-image-capture-source-v1" false)
 protocolnew("staging/ext-image-copy-capture" "ext-image-copy-capture-v1" false)
+protocolnew("staging/ext-background-effect" "ext-background-effect-v1" false)
 
+protocolnew("${HYPRLAND_PROTOCOLS}/protocols" "hyprland-input-capture-v1"
+            true)
 protocolwayland()
 
 # tools

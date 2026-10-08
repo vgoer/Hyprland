@@ -55,11 +55,29 @@ enum eBorderIconDirection : uint8_t {
 };
 
 struct STouchData {
-    WP<SSessionLockSurface> touchFocusLockSurface;
-    PHLWINDOWREF            touchFocusWindow;
-    PHLLSREF                touchFocusLS;
-    WP<CWLSurfaceResource>  touchFocusSurface;
-    Vector2D                touchSurfaceOrigin;
+    struct SConsumedTouch {
+        WP<ITouch> device;
+        int32_t    id = 0;
+    };
+
+    struct SWorkspaceSwipe {
+        WP<ITouch>          device;
+        int32_t             id        = 0;
+        uint64_t            sessionID = 0;
+        PHLMONITORREF       monitor;
+        bool                fromEnd = false;
+        CHyprSignalListener deviceDestroy;
+    };
+
+    std::optional<SWorkspaceSwipe> workspaceSwipe;
+    std::vector<SConsumedTouch>    consumedTouches;
+
+    WP<SSessionLockSurface>        touchFocusLockSurface;
+    PHLWINDOWREF                   touchFocusWindow;
+    PHLLSREF                       touchFocusLS;
+    WP<CWLSurfaceResource>         touchFocusSurface;
+    Vector2D                       touchSurfaceOrigin;
+    Vector2D                       lastTouchPos;
 };
 
 // The third row is always 0 0 1 and is not expected by `libinput_device_config_calibration_set_matrix`
@@ -80,8 +98,6 @@ static const float MATRICES[8][6] = {{// normal
                                      {// flipped + rotation 270°
                                       0, -1, 1, -1, 0, 1}};
 
-class CKeybindManager;
-
 class CInputManager {
   public:
     CInputManager();
@@ -93,6 +109,7 @@ class CInputManager {
     void               onMouseWheel(IPointer::SAxisEvent, SP<IPointer> pointer = nullptr);
     void               onPointerFrame();
     void               onKeyboardKey(const IKeyboard::SKeyEvent&, SP<IKeyboard>);
+    void               onMouseFrame();
     void               onKeyboardMod(SP<IKeyboard>);
 
     void               newKeyboard(SP<IKeyboard>);
@@ -116,6 +133,9 @@ class CInputManager {
     void               unconstrainMouse();
     bool               isConstrained();
     bool               isLocked();
+    bool               hasHeldButtons();
+
+    bool               anyHidHasCap(eHIDCapabilityType type);
 
     Vector2D           getMouseCoordsInternal();
     void               refocus(std::optional<Vector2D> overridePos = std::nullopt);
@@ -127,6 +147,7 @@ class CInputManager {
     void               setPointerConfigs();
     void               setTouchDeviceConfigs(SP<ITouch> dev = nullptr);
     void               setTabletConfigs();
+    void               setTabletToolConfigs();
 
     void               updateCapabilities();
     void               updateKeyboardsLeds(SP<IKeyboard>);
@@ -136,8 +157,9 @@ class CInputManager {
     void               processMouseRequest(const CSeatManager::SSetCursorEvent& event);
 
     void               onTouchDown(ITouch::SDownEvent);
-    void               onTouchUp(ITouch::SUpEvent);
-    void               onTouchMove(ITouch::SMotionEvent);
+    void               onTouchUp(ITouch::SUpEvent, SP<ITouch> device);
+    void               onTouchMove(ITouch::SMotionEvent, SP<ITouch> device);
+    void               onTouchCancel(ITouch::SCancelEvent, SP<ITouch> device);
 
     void               onSwipeBegin(IPointer::SSwipeBeginEvent);
     void               onSwipeEnd(IPointer::SSwipeEndEvent);
@@ -169,7 +191,7 @@ class CInputManager {
     std::list<SSwitchDevice> m_switches;
 
     // Exclusive layer surfaces
-    std::vector<PHLLSREF> m_exclusiveLSes;
+    std::vector<PHLLSREF> m_exclusiveKeyboardLSes;
 
     // constraints
     std::vector<WP<CPointerConstraint>> m_constraints;
@@ -185,7 +207,9 @@ class CInputManager {
 
     // for shared mods
     const std::vector<uint32_t>& getKeysFromAllKBs();
-    uint32_t                     getModsFromAllKBs();
+    Input::ModifierMask          getModsFromAllKBs();
+    Input::ModifierMask          xkbModsToHyprland(SP<IKeyboard> relative, uint32_t mask);
+    uint32_t                     hyprlandModsToXkb(SP<IKeyboard> relative, Input::ModifierMask mask);
 
     // for virtual keyboards: whether we should respect them as normal ones
     bool        shouldIgnoreVirtualKeyboard(SP<IKeyboard>);
@@ -263,8 +287,13 @@ class CInputManager {
     bool m_focusHeldByButtons   = false;
     bool m_refocusHeldByButtons = false;
 
+    struct SHeldPointerButton {
+        uint32_t     button = 0;
+        WP<IPointer> pointer;
+    };
+
     // for releasing mouse buttons
-    std::list<uint32_t> m_currentlyHeldButtons;
+    std::list<SHeldPointerButton> m_currentlyHeldButtons;
 
     // idle inhibitors
     struct SIdleInhibitor {
@@ -297,11 +326,10 @@ class CInputManager {
     bool                  m_pointerAxisFramePending = false;
 
     bool                  shareKeyFromAllKBs(uint32_t key, bool pressed);
-    uint32_t              shareModsFromAllKBs(uint32_t depressed);
+    Input::ModifierMask   shareModsFromAllKBs(Input::ModifierMask mask);
     std::vector<uint32_t> m_pressed;
-    uint32_t              m_lastMods = 0;
+    Input::ModifierMask   m_lastMods = Input::HL_MODIFIER_NONE;
 
-    friend class CKeybindManager;
     friend class Desktop::View::CWLSurface;
     friend class CWorkspaceSwipeGesture;
 };

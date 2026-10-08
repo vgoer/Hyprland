@@ -1,5 +1,9 @@
 #pragma once
 
+namespace Render {
+    class CRenderContext;
+}
+
 #include <vector>
 #include "../../helpers/memory/Memory.hpp"
 #include "../../protocols/types/Buffer.hpp"
@@ -13,10 +17,10 @@ class CWLPointerResource;
 
 namespace Screenshare {
     enum eScreenshareType : uint8_t {
+        SHARE_NONE,
         SHARE_MONITOR,
         SHARE_WINDOW,
         SHARE_REGION,
-        SHARE_NONE
     };
 
     enum eScreenshareError : uint8_t {
@@ -46,6 +50,7 @@ namespace Screenshare {
         UP<CScreenshareFrame> nextFrame(bool overlayCursor);
         void                  stop();
         bool                  isActive();
+        bool                  isStale();
 
         // constraints
         const std::vector<DRMFormat>& allowedFormats() const;
@@ -80,6 +85,7 @@ namespace Screenshare {
 
         SP<CEventLoopTimer>      m_shareStopTimer;
         bool                     m_sharing = false;
+        bool                     m_stale   = false;
 
         struct {
             CHyprSignalListener monitorDestroyed;
@@ -145,7 +151,7 @@ namespace Screenshare {
         } m_listeners;
 
         bool copy();
-        void render();
+        void render(Render::CRenderContext& ctx);
         void calculateConstraints();
 
         friend class CScreenshareFrame;
@@ -174,6 +180,7 @@ namespace Screenshare {
         Vector2D                m_bufferSize = Vector2D(0, 0);
         CRegion                 m_damage; // damage in buffer coords
         bool                    m_shared = false, m_copied = false, m_failed = false;
+        bool                    m_copyInFlight  = false; // a dmabuf copy is issued and waiting on its fence
         bool                    m_overlayCursor = true;
         bool                    m_isFirst       = false;
 
@@ -182,10 +189,10 @@ namespace Screenshare {
         bool copyDmabuf();
         bool copyShm();
 
-        void render();
-        void renderMonitor();
-        void renderMonitorRegion();
-        void renderWindow();
+        void render(Render::CRenderContext& ctx);
+        void renderMonitor(Render::CRenderContext& ctx);
+        void renderMonitorRegion(Render::CRenderContext& ctx);
+        void renderWindow(Render::CRenderContext& ctx);
 
         void storeTempFB();
 
@@ -196,6 +203,21 @@ namespace Screenshare {
     class CScreenshareManager {
       public:
         CScreenshareManager();
+
+        struct SOutputCopyFBState {
+            uint32_t activeSessions       = 0;
+            uint32_t sharingSessions      = 0;
+            uint32_t pendingFrames        = 0;
+            uint32_t monitorSessions      = 0;
+            uint32_t regionSessions       = 0;
+            uint32_t pendingMonitorFrames = 0;
+            uint32_t pendingRegionFrames  = 0;
+            uint32_t pendingWindowFrames  = 0;
+
+            bool     needsCopyFB() const {
+                return pendingFrames > 0;
+            }
+        };
 
         UP<CScreenshareSession> newSession(wl_client* client, PHLMONITOR monitor);
         UP<CScreenshareSession> newSession(wl_client* client, PHLMONITOR monitor, CBox captureRegion);
@@ -209,6 +231,9 @@ namespace Screenshare {
 
         void                    onOutputCommit(PHLMONITOR monitor);
         bool                    isOutputBeingSSd(PHLMONITOR monitor);
+        bool                    isOutputDSBlocked(PHLMONITOR monitor);
+        bool                    outputNeedsCopyFB(PHLMONITOR monitor);
+        SOutputCopyFBState      outputCopyFBState(PHLMONITOR monitor);
 
       private:
         std::vector<WP<CScreenshareSession>> m_sessions;
@@ -231,7 +256,7 @@ namespace Screenshare {
     inline UP<CScreenshareManager>& mgr() {
         static UP<CScreenshareManager> manager = nullptr;
         if (!manager && g_pHyprRenderer) {
-            Log::logger->log(Log::DEBUG, "Starting ScreenshareManager");
+            LOG(Log::DEBUG, "Starting ScreenshareManager");
             manager = makeUnique<CScreenshareManager>();
         }
         return manager;

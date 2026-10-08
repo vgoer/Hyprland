@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AnimatedDecorationGradient.hpp"
 #include "IHyprWindowDecoration.hpp"
 
 class CHyprInnerGlowDecoration : public IHyprWindowDecoration {
@@ -11,7 +12,7 @@ class CHyprInnerGlowDecoration : public IHyprWindowDecoration {
 
     virtual void                       onPositioningReply(const SDecorationPositioningReply& reply);
 
-    virtual void                       draw(PHLMONITOR, float const& a);
+    virtual void                       draw(Render::CRenderContext& ctx, PHLMONITOR, float const& a, const Render::SWindowRenderPresentation& presentation);
 
     virtual eDecorationType            getDecorationType();
 
@@ -25,11 +26,23 @@ class CHyprInnerGlowDecoration : public IHyprWindowDecoration {
 
     virtual std::string                getDisplayName();
 
-    void                               render(PHLMONITOR, float const& a);
+    virtual void                       initializeAnimations() override;
+    virtual void                       updateState() override;
+    virtual void                       onWindowMap() override;
+    virtual void                       onWindowFocus() override;
+
+    void                               render(Render::CRenderContext& ctx, PHLMONITOR, float const& a, const Render::SWindowRenderPresentation& presentation);
 
   private:
+    bool         visible();
+    void         drawGlowInternal(Render::CRenderContext& ctx, const CBox& box, int round, float roundingPower, int range, const Config::CGradientValueData& grad, float a);
+    void         drawGlowInternal(Render::CRenderContext& ctx, const CBox& box, int round, float roundingPower, int range, const Config::CGradientValueData& grad1,
+                                  const Config::CGradientValueData& grad2, float lerp, float a);
+
     PHLWINDOWREF m_window;
 
-    Vector2D     m_lastWindowPos;
-    Vector2D     m_lastWindowSize;
+    CAnimatedDecorationGradient m_gradient;
+
+    Vector2D                    m_lastWindowPos;
+    Vector2D                    m_lastWindowSize;
 };

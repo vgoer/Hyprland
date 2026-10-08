@@ -7,11 +7,6 @@ void CWorkspaceRule::mergeLeft(const CWorkspaceRule& other) {
         m_monitor = other.m_monitor;
     if (m_workspaceString.empty())
         m_workspaceString = other.m_workspaceString;
-    if (m_workspaceName.empty())
-        m_workspaceName = other.m_workspaceName;
-    if (m_workspaceId == WORKSPACE_INVALID)
-        m_workspaceId = other.m_workspaceId;
-
     if (other.m_isDefault.has_value())
         m_isDefault = other.m_isDefault;
     if (other.m_isPersistent.has_value())
@@ -45,4 +40,12 @@ void CWorkspaceRule::mergeLeft(const CWorkspaceRule& other) {
     }
     if (other.m_animationStyle.has_value())
         m_animationStyle = other.m_animationStyle;
+}
+
+void CWorkspaceRule::setEnabled(bool enabled) {
+    m_enabled = enabled;
+}
+
+bool CWorkspaceRule::isEnabled() const {
+    return m_enabled;
 }

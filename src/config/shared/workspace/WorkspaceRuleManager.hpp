@@ -6,6 +6,11 @@
 #include "WorkspaceRule.hpp"
 #include "../../../desktop/DesktopTypes.hpp"
 #include "../../../helpers/memory/Memory.hpp"
+#include "../../../workspace/AbstractWorkspace.hpp"
+
+namespace Monitor {
+    class IMonitorAddressable;
+}
 
 namespace Config {
     class CWorkspaceRuleManager {
@@ -13,18 +18,20 @@ namespace Config {
         CWorkspaceRuleManager()  = default;
         ~CWorkspaceRuleManager() = default;
 
-        void                               clear();
-        void                               add(CWorkspaceRule&&);
-        void                               replaceOrAdd(CWorkspaceRule&&);
+        void                                   clear();
+        SP<CWorkspaceRule>                     add(CWorkspaceRule&&);
+        SP<CWorkspaceRule>                     replaceOrAdd(CWorkspaceRule&&);
 
-        std::optional<CWorkspaceRule>      getWorkspaceRuleFor(PHLWORKSPACE workspace);
-        std::string                        getDefaultWorkspaceFor(const std::string&);
-        PHLMONITOR                         getBoundMonitorForWS(const std::string&);
-        std::string                        getBoundMonitorStringForWS(const std::string&);
-        const std::vector<CWorkspaceRule>& getAllWorkspaceRules();
+        std::optional<CWorkspaceRule>          getWorkspaceRuleFor(PHLWORKSPACE workspace);
+        std::string                            getDefaultWorkspaceFor(const Monitor::IMonitorAddressable&);
+        PHLMONITOR                             getBoundMonitorForWS(const std::string&);
+        std::string                            getBoundMonitorStringForWS(const std::string&);
+        std::optional<PHLMONITOR>              getBoundMonitorForWS(const ::Workspace::WorkspaceID&, ::Workspace::eWorkspaceType, std::string_view address);
+        std::string                            getBoundMonitorStringForWS(const ::Workspace::WorkspaceID&, ::Workspace::eWorkspaceType, std::string_view address);
+        const std::vector<SP<CWorkspaceRule>>& getAllWorkspaceRules();
 
       private:
-        std::vector<CWorkspaceRule> m_rules;
+        std::vector<SP<CWorkspaceRule>> m_rules;
     };
 
     UP<CWorkspaceRuleManager>& workspaceRuleMgr();

@@ -1,8 +1,8 @@
 #include "InputManager.hpp"
-#include "../../desktop/view/Window.hpp"
+#include "../../desktop/view/window/Window.hpp"
 #include "../../protocols/Tablet.hpp"
 #include "../../devices/Tablet.hpp"
-#include "../../managers/PointerManager.hpp"
+#include "../../pointer/PointerManager.hpp"
 #include "../../managers/SeatManager.hpp"
 #include "../../protocols/PointerConstraints.hpp"
 #include "../../protocols/core/DataDevice.hpp"
@@ -73,12 +73,12 @@ static void refocusTablet(SP<CTablet> tab, SP<CTabletTool> tool, bool motion = f
 
         // yes, this technically ignores any regions set by the app. Too bad!
         if (WINDOW)
-            local = tool->m_absolutePos * WINDOW->m_realSize->goal();
+            local = tool->m_absolutePos * WINDOW->size(Desktop::View::IGeometric::GEOMETRIC_GOAL);
         else
             local = tool->m_absolutePos * BOX->size();
 
-        if (WINDOW && WINDOW->m_isX11)
-            local = local * WINDOW->m_X11SurfaceScaledBy;
+        if (WINDOW && WINDOW->backend().isX11())
+            local = WINDOW->backend().surfaceLocalToBuffer(local);
 
         PROTO::tablet->motion(tool, local);
         return;
@@ -86,8 +86,8 @@ static void refocusTablet(SP<CTablet> tab, SP<CTabletTool> tool, bool motion = f
 
     auto local = CURSORPOS - BOX->pos();
 
-    if (WINDOW && WINDOW->m_isX11)
-        local = local * WINDOW->m_X11SurfaceScaledBy;
+    if (WINDOW && WINDOW->backend().isX11())
+        local = WINDOW->backend().surfaceLocalToBuffer(local);
 
     PROTO::tablet->motion(tool, local);
 }
@@ -107,6 +107,9 @@ static Vector2D transformToActiveRegion(const Vector2D pos, const CBox activeAre
 }
 
 void CInputManager::onTabletAxis(CTablet::SAxisEvent e) {
+    if (!e.tablet->m_enabled)
+        return;
+
     Event::SCallbackInfo info;
     Event::bus()->m_events.input.tablet.axis.emit(e, info);
     if (info.cancelled)
@@ -115,7 +118,9 @@ void CInputManager::onTabletAxis(CTablet::SAxisEvent e) {
     const auto PTAB  = e.tablet;
     const auto PTOOL = ensureTabletToolPresent(e.tool);
 
-    if (PTOOL->m_active && (e.updatedAxes & (CTablet::eTabletToolAxes::HID_TABLET_TOOL_AXIS_X | CTablet::eTabletToolAxes::HID_TABLET_TOOL_AXIS_Y))) {
+    if (e.updatedAxes & (CTablet::eTabletToolAxes::HID_TABLET_TOOL_AXIS_X | CTablet::eTabletToolAxes::HID_TABLET_TOOL_AXIS_Y)) {
+        PTOOL->m_active = true;
+
         double   x  = (e.updatedAxes & CTablet::eTabletToolAxes::HID_TABLET_TOOL_AXIS_X) ? e.axis.x : NAN;
         double   dx = (e.updatedAxes & CTablet::eTabletToolAxes::HID_TABLET_TOOL_AXIS_X) ? e.axisDelta.x : NAN;
         double   y  = (e.updatedAxes & CTablet::eTabletToolAxes::HID_TABLET_TOOL_AXIS_Y) ? e.axis.y : NAN;
@@ -125,7 +130,7 @@ void CInputManager::onTabletAxis(CTablet::SAxisEvent e) {
 
         switch (e.tool->type) {
             case Aquamarine::ITabletTool::AQ_TABLET_TOOL_TYPE_MOUSE: {
-                g_pPointerManager->move(delta);
+                Pointer::mgr()->move(delta);
                 break;
             }
             default: {
@@ -135,9 +140,9 @@ void CInputManager::onTabletAxis(CTablet::SAxisEvent e) {
                     PTOOL->m_absolutePos.y = y;
 
                 if (PTAB->m_relativeInput)
-                    g_pPointerManager->move(delta);
+                    Pointer::mgr()->move(delta);
                 else
-                    g_pPointerManager->warpAbsolute(transformToActiveRegion({x, y}, PTAB->m_activeArea), PTAB);
+                    Pointer::mgr()->warpAbsolute(transformToActiveRegion({x, y}, PTAB->m_activeArea), PTAB);
 
                 break;
             }
@@ -176,6 +181,16 @@ void CInputManager::onTabletAxis(CTablet::SAxisEvent e) {
 }
 
 void CInputManager::onTabletTip(CTablet::STipEvent e) {
+    if (!e.tablet->m_enabled) {
+        if (!e.in) {
+            const auto PTOOL = ensureTabletToolPresent(e.tool);
+            if (PTOOL->m_isDown)
+                PROTO::tablet->up(PTOOL);
+            PTOOL->m_isDown = false;
+        }
+        return;
+    }
+
     Event::SCallbackInfo info;
     Event::bus()->m_events.input.tablet.tip.emit(e, info);
     if (info.cancelled)
@@ -186,9 +201,9 @@ void CInputManager::onTabletTip(CTablet::STipEvent e) {
     const auto POS   = e.tip;
 
     if (PTAB->m_relativeInput)
-        g_pPointerManager->move({0, 0});
+        Pointer::mgr()->move({0, 0});
     else
-        g_pPointerManager->warpAbsolute(transformToActiveRegion(POS, PTAB->m_activeArea), PTAB);
+        Pointer::mgr()->warpAbsolute(transformToActiveRegion(POS, PTAB->m_activeArea), PTAB);
 
     if (e.in)
         refocus();
@@ -204,6 +219,15 @@ void CInputManager::onTabletTip(CTablet::STipEvent e) {
 }
 
 void CInputManager::onTabletButton(CTablet::SButtonEvent e) {
+    if (!e.tablet->m_enabled) {
+        if (!e.down) {
+            const auto PTOOL = ensureTabletToolPresent(e.tool);
+            if (std::erase(PTOOL->m_buttonsDown, e.button) > 0)
+                PROTO::tablet->buttonTool(PTOOL, e.button, false);
+        }
+        return;
+    }
+
     Event::SCallbackInfo info;
     Event::bus()->m_events.input.tablet.button.emit(e, info);
     if (info.cancelled)
@@ -223,6 +247,19 @@ void CInputManager::onTabletButton(CTablet::SButtonEvent e) {
 }
 
 void CInputManager::onTabletProximity(CTablet::SProximityEvent e) {
+    if (!e.tablet->m_enabled) {
+        if (!e.in) {
+            const auto PTOOL = ensureTabletToolPresent(e.tool);
+            if (PTOOL->getSurface())
+                unfocusTool(PTOOL);
+            PTOOL->m_active = false;
+            PTOOL->m_isDown = false;
+            PTOOL->m_buttonsDown.clear();
+            m_lastInputTablet = false;
+        }
+        return;
+    }
+
     Event::SCallbackInfo info;
     Event::bus()->m_events.input.tablet.proximity.emit(e, info);
     if (info.cancelled)
@@ -251,10 +288,10 @@ void CInputManager::newTablet(SP<Aquamarine::ITablet> pDevice) {
     try {
         PNEWTABLET->m_hlName = g_pInputManager->getNameForNewDevice(pDevice->getName());
     } catch (std::exception& e) {
-        Log::logger->log(Log::ERR, "Tablet had no name???"); // logic error
+        LOG(Log::ERR, "Tablet had no name???"); // logic error
     }
 
-    g_pPointerManager->attachTablet(PNEWTABLET);
+    Pointer::mgr()->attachTablet(PNEWTABLET);
 
     PNEWTABLET->m_events.destroy.listenStatic([this, tablet = PNEWTABLET.get()] {
         auto TABLET = tablet->m_self;
@@ -277,13 +314,15 @@ SP<CTabletTool> CInputManager::ensureTabletToolPresent(SP<Aquamarine::ITabletToo
     try {
         PTOOL->m_hlName = g_pInputManager->getNameForNewDevice(pTool->getName());
     } catch (std::exception& e) {
-        Log::logger->log(Log::ERR, "Tablet had no name???"); // logic error
+        LOG(Log::ERR, "Tablet had no name???"); // logic error
     }
 
     PTOOL->m_events.destroy.listenStatic([this, tool = PTOOL.get()] {
         auto TOOL = tool->m_self;
         destroyTabletTool(TOOL.lock());
     });
+
+    setTabletToolConfigs();
 
     return PTOOL;
 }
@@ -295,7 +334,7 @@ void CInputManager::newTabletPad(SP<Aquamarine::ITabletPad> pDevice) {
     try {
         PNEWPAD->m_hlName = g_pInputManager->getNameForNewDevice(pDevice->getName());
     } catch (std::exception& e) {
-        Log::logger->log(Log::ERR, "Pad had no name???"); // logic error
+        LOG(Log::ERR, "Pad had no name???"); // logic error
     }
 
     PNEWPAD->m_events.destroy.listenStatic([this, pad = PNEWPAD.get()] {

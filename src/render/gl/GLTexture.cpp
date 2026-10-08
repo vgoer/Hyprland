@@ -14,7 +14,7 @@ CGLTexture::CGLTexture(bool opaque) {
 }
 
 CGLTexture::~CGLTexture() {
-    if (!g_pCompositor || g_pCompositor->m_isShuttingDown || !g_pHyprRenderer)
+    if (!g_pCompositor || g_pCompositor->m_isShuttingDown || !g_pHyprRenderer || !g_pHyprOpenGL)
         return;
 
     g_pHyprOpenGL->makeEGLCurrent();
@@ -68,14 +68,14 @@ CGLTexture::CGLTexture(uint32_t drmFormat, uint8_t* pixels, uint32_t stride, con
 CGLTexture::CGLTexture(const Aquamarine::SDMABUFAttrs& attrs, void* image, bool opaque) {
     m_opaque = opaque;
     if (!g_pHyprOpenGL->m_proc.glEGLImageTargetTexture2DOES) {
-        Log::logger->log(Log::ERR, "Cannot create a dmabuf texture: no glEGLImageTargetTexture2DOES");
+        LOG(Log::ERR, "Cannot create a dmabuf texture: no glEGLImageTargetTexture2DOES");
         return;
     }
 
     m_opaque = isDrmFormatOpaque(attrs.format);
 
-    // #TODO external only formats should be external aswell.
-    // also needs a seperate color shader.
+    // #TODO external only formats should be external as well.
+    // also needs a separate color shader.
     /*if (NFormatUtils::isFormatYUV(attrs.format)) {
         m_target = GL_TEXTURE_EXTERNAL_OES;
         m_type   = TEXTURE_EXTERNAL;
@@ -197,7 +197,9 @@ constexpr std::optional<size_t> CGLTexture::getCacheStateIndex(GLenum pname) {
         case GL_TEXTURE_MAG_FILTER: return TEXTURE_PAR_MAG_FILTER;
         case GL_TEXTURE_MIN_FILTER: return TEXTURE_PAR_MIN_FILTER;
         case GL_TEXTURE_SWIZZLE_R: return TEXTURE_PAR_SWIZZLE_R;
+        case GL_TEXTURE_SWIZZLE_G: return TEXTURE_PAR_SWIZZLE_G;
         case GL_TEXTURE_SWIZZLE_B: return TEXTURE_PAR_SWIZZLE_B;
+        case GL_TEXTURE_SWIZZLE_A: return TEXTURE_PAR_SWIZZLE_A;
         default: return std::nullopt;
     }
 }

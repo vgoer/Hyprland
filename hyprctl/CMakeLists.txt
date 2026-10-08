@@ -5,11 +5,18 @@ project(
     DESCRIPTION "Control utility for Hyprland"
 )
 
-pkg_check_modules(hyprctl_deps REQUIRED IMPORTED_TARGET hyprutils>=0.2.4 hyprwire re2)
+set(READLINE readline)
+
+if(CMAKE_SYSTEM_NAME MATCHES "OpenBSD")
+    set(READLINE ereadline)
+endif()
+
+pkg_check_modules(hyprctl_deps REQUIRED IMPORTED_TARGET hyprutils>=0.2.4 hyprwire re2 ${READLINE})
 
 file(GLOB_RECURSE HYPRCTL_SRCFILES CONFIGURE_DEPENDS "src/*.cpp" "hw-protocols/*.cpp" "include/*.hpp")
 
 add_executable(hyprctl ${HYPRCTL_SRCFILES})
+set_target_properties(hyprctl PROPERTIES CXX_VISIBILITY_PRESET hidden)
 
 target_link_libraries(hyprctl PUBLIC PkgConfig::hyprctl_deps)
 target_include_directories(hyprctl PRIVATE "hw-protocols")
@@ -34,13 +41,3 @@ hyprprotocol(hw-protocols hyprpaper_core)
 
 # binary
 install(TARGETS hyprctl)
-
-# shell completions
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/hyprctl.bash
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/bash-completion/completions
-        RENAME hyprctl)
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/hyprctl.fish
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/fish/vendor_completions.d)
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/hyprctl.zsh
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/zsh/site-functions
-        RENAME _hyprctl)

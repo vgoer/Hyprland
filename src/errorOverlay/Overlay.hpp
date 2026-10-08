@@ -1,5 +1,9 @@
 #pragma once
 
+namespace Render {
+    class CRenderContext;
+}
+
 #include <vector>
 
 #include "../defines.hpp"
@@ -24,7 +28,7 @@ namespace ErrorOverlay {
         void  queueCreate(std::string message, const CHyprColor& color);
         void  queueCreate(std::string message, const Config::CGradientValueData& gradient);
         void  queueError(std::string err);
-        void  draw();
+        void  draw(Render::CRenderContext& ctx);
         void  destroy();
 
         bool  active();
@@ -32,6 +36,7 @@ namespace ErrorOverlay {
 
       private:
         void                       createQueued();
+        void                       updateReservedArea(PHLMONITOR monitor);
         std::string                m_queued = "";
         Config::CGradientValueData m_queuedBorderGradient;
         Config::CGradientValueData m_borderGradient;

@@ -1,12 +1,12 @@
 #include "TearingControl.hpp"
 #include "../managers/ProtocolManager.hpp"
-#include "../desktop/view/Window.hpp"
+#include "../desktop/view/window/Window.hpp"
 #include "../event/EventBus.hpp"
 #include "../Compositor.hpp"
 #include "core/Compositor.hpp"
 
 CTearingControlProtocol::CTearingControlProtocol(const wl_interface* iface, const int& ver, const std::string& name) : IWaylandProtocol(iface, ver, name) {
-    static auto P = Event::bus()->m_events.window.destroy.listen([this](PHLWINDOW window) { onWindowDestroy(window); });
+    static auto P = Event::bus()->m_events.window.destroy.listen([this](PHLWINDOWREF window) { onWindowDestroy(window.lock()); });
 }
 
 void CTearingControlProtocol::bindManager(wl_client* client, void* data, uint32_t ver, uint32_t id) {
@@ -52,7 +52,7 @@ CTearingControl::CTearingControl(SP<CWpTearingControlV1> resource_, SP<CWLSurfac
     m_resource->setDestroy([this](CWpTearingControlV1* res) { PROTO::tearing->onControllerDestroy(this); });
     m_resource->setSetPresentationHint([this](CWpTearingControlV1* res, wpTearingControlV1PresentationHint hint) { this->onHint(hint); });
 
-    for (auto const& w : g_pCompositor->m_windows) {
+    for (auto const& w : Desktop::windowState()->windows()) {
         if (w->wlSurface()->resource() == surf_) {
             m_window = w;
             break;
@@ -69,7 +69,10 @@ void CTearingControl::updateWindow() {
     if UNLIKELY (m_window.expired())
         return;
 
-    m_window->m_tearingHint = m_hint == WP_TEARING_CONTROL_V1_PRESENTATION_HINT_ASYNC;
+    if (m_hint == WP_TEARING_CONTROL_V1_PRESENTATION_HINT_ASYNC)
+        m_window->m_hints |= Desktop::View::WINDOW_HINT_TEAR;
+    else
+        m_window->m_hints &= ~Desktop::View::WINDOW_HINT_TEAR;
 }
 
 bool CTearingControl::good() {

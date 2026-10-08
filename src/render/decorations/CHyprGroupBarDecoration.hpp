@@ -32,7 +32,7 @@ class CHyprGroupBarDecoration : public IHyprWindowDecoration {
 
     virtual void                       onPositioningReply(const SDecorationPositioningReply& reply);
 
-    virtual void                       draw(PHLMONITOR, float const& a);
+    virtual void                       draw(Render::CRenderContext& ctx, PHLMONITOR, float const& a, const Render::SWindowRenderPresentation& presentation);
 
     virtual eDecorationType            getDecorationType();
 
@@ -58,12 +58,13 @@ class CHyprGroupBarDecoration : public IHyprWindowDecoration {
     float                     m_barWidth;
     float                     m_barHeight;
 
-    bool                      m_bLastVisibilityStatus = true;
+    std::optional<bool>       m_bLastVisibilityStatus;
 
     CTitleTex*                textureFromTitle(const std::string&);
     void                      invalidateTextures();
 
     CBox                      assignedBoxGlobal();
+    CBox                      assignedBoxGlobal(const Render::SWindowRenderPresentation& presentation);
     bool                      visible();
 
     bool                      onBeginWindowDragOnDeco(const Vector2D&);

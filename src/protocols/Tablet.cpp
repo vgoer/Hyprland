@@ -7,7 +7,6 @@
 #include "core/Seat.hpp"
 #include "core/Compositor.hpp"
 #include <algorithm>
-#include <cstring>
 
 CTabletPadStripV2Resource::CTabletPadStripV2Resource(SP<CZwpTabletPadStripV2> resource_, uint32_t id_) : m_id(id_), m_resource(resource_) {
     if UNLIKELY (!good())
@@ -50,8 +49,8 @@ void CTabletPadGroupV2Resource::sendData(SP<CTabletPad> pad, SP<Aquamarine::ITab
 
     wl_array buttonArr;
     wl_array_init(&buttonArr);
-    wl_array_add(&buttonArr, group->buttons.size() * sizeof(int));
-    memcpy(buttonArr.data, group->buttons.data(), group->buttons.size() * sizeof(int));
+    if (const auto PBUTTONS = sc<int*>(wl_array_add(&buttonArr, group->buttons.size() * sizeof(int))))
+        std::ranges::copy(group->buttons, PBUTTONS);
     m_resource->sendButtons(&buttonArr);
     wl_array_release(&buttonArr);
 
@@ -549,7 +548,7 @@ void CTabletV2Protocol::proximityIn(SP<CTabletTool> tool, SP<CTablet> tablet, SP
             continue;
 
         if (t->m_seat.expired()) {
-            LOGM(Log::ERR, "proximityIn on a tool without a seat parent");
+            LOG(Log::ERR, "proximityIn on a tool without a seat parent");
             return;
         }
 
@@ -571,7 +570,7 @@ void CTabletV2Protocol::proximityIn(SP<CTabletTool> tool, SP<CTablet> tablet, SP
     }
 
     if (!tabletResource || !toolResource) {
-        LOGM(Log::ERR, "proximityIn on a tool and tablet without valid resource(s)??");
+        LOG(Log::ERR, "proximityIn on a tool and tablet without valid resource(s)??");
         return;
     }
 
@@ -582,7 +581,7 @@ void CTabletV2Protocol::proximityIn(SP<CTabletTool> tool, SP<CTablet> tablet, SP
     toolResource->m_resource->sendProximityIn(serial, tabletResource->m_resource.get(), surf->getResource()->resource());
     toolResource->queueFrame();
 
-    LOGM(Log::ERR, "proximityIn: found no resource to send enter");
+    LOG(Log::ERR, "proximityIn: found no resource to send enter");
 }
 
 void CTabletV2Protocol::proximityOut(SP<CTabletTool> tool) {
@@ -623,7 +622,7 @@ void CTabletV2Protocol::mode(SP<CTabletPad> pad, uint32_t group, uint32_t mode, 
         if (t->m_pad != pad)
             continue;
         if (t->m_groups.size() <= group) {
-            LOGM(Log::ERR, "BUG THIS: group >= t->groups.size()");
+            LOG(Log::ERR, "BUG THIS: group >= t->groups.size()");
             return;
         }
         auto serial = g_pSeatManager->nextSerial(g_pSeatManager->seatResourceForClient(t->m_resource->client()));
@@ -640,9 +639,9 @@ void CTabletV2Protocol::buttonPad(SP<CTabletPad> pad, uint32_t button, uint32_t 
 }
 
 void CTabletV2Protocol::strip(SP<CTabletPad> pad, uint32_t strip, double position, bool finger, uint32_t timeMs) {
-    LOGM(Log::ERR, "FIXME: STUB: CTabletV2Protocol::strip not implemented");
+    LOG(Log::ERR, "FIXME: STUB: CTabletV2Protocol::strip not implemented");
 }
 
 void CTabletV2Protocol::ring(SP<CTabletPad> pad, uint32_t ring, double position, bool finger, uint32_t timeMs) {
-    LOGM(Log::ERR, "FIXME: STUB: CTabletV2Protocol::ring not implemented");
+    LOG(Log::ERR, "FIXME: STUB: CTabletV2Protocol::ring not implemented");
 }

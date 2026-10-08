@@ -4,11 +4,12 @@
 #include <vector>
 #include "WLSurface.hpp"
 #include "View.hpp"
+#include "types/Geometric.hpp"
 
 class CSessionLockSurface;
 
 namespace Desktop::View {
-    class CSessionLock : public IView {
+    class CSessionLock : public virtual IView, public virtual IGeometric {
       public:
         static SP<CSessionLock> create(SP<CSessionLockSurface> resource);
 
@@ -16,11 +17,16 @@ namespace Desktop::View {
 
         virtual ~CSessionLock();
 
-        virtual eViewType           type() const;
-        virtual bool                visible() const;
-        virtual std::optional<CBox> logicalBox() const;
-        virtual bool                desktopComponent() const;
-        virtual std::optional<CBox> surfaceLogicalBox() const;
+        virtual eViewType           type() const override;
+        virtual bool                mapped() const override;
+        virtual bool                focusAvailable() const override;
+        virtual std::optional<CBox> logicalBox() const override;
+        virtual bool                desktopComponent() const override;
+        virtual std::optional<CBox> surfaceLogicalBox() const override;
+        virtual Vector2D            position(eGeometricValueType) const override;
+        virtual Vector2D            size(eGeometricValueType) const override;
+        virtual CBox                geometricBox(eGeometricValueType) const override;
+        virtual bool                cantLockCursor() const override;
 
         PHLMONITOR                  monitor() const;
 
@@ -29,11 +35,7 @@ namespace Desktop::View {
       private:
         CSessionLock();
 
-        void init();
-
-        struct {
-            CHyprSignalListener destroy;
-        } m_listeners;
+        void                    init();
 
         WP<CSessionLockSurface> m_surface;
     };

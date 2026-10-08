@@ -118,14 +118,14 @@ CWLPointerResource::CWLPointerResource(SP<CWlPointer> resource_, SP<CWLSeatResou
 
     m_resource->setSetCursor([this](CWlPointer* r, uint32_t serial, wl_resource* surf, int32_t hotX, int32_t hotY) {
         if (!m_owner) {
-            LOGM(Log::ERR, "Client bug: setCursor when seatClient is already dead");
+            LOG(Log::ERR, "Client bug: setCursor when seatClient is already dead");
             return;
         }
 
         auto surfResource = surf ? CWLSurfaceResource::fromResource(surf) : nullptr;
 
         if (surfResource && surfResource->m_role->role() != SURFACE_ROLE_CURSOR && surfResource->m_role->role() != SURFACE_ROLE_UNASSIGNED) {
-            r->error(-1, "Cursor surface already has a different role");
+            r->error(WL_POINTER_ERROR_ROLE, "Cursor surface already has a different role");
             return;
         }
 
@@ -168,7 +168,7 @@ void CWLPointerResource::sendEnter(SP<CWLSurfaceResource> surface, const Vector2
         return;
 
     if (m_currentSurface) {
-        LOGM(Log::WARN, "requested CWLPointerResource::sendEnter without sendLeave first.");
+        LOG(Log::WARN, "requested CWLPointerResource::sendEnter without sendLeave first.");
         sendLeave();
     }
 
@@ -179,7 +179,7 @@ void CWLPointerResource::sendEnter(SP<CWLSurfaceResource> surface, const Vector2
 
     const auto fixedLocal = fixPosWithWlFixed(local);
 
-    m_resource->sendEnter(g_pSeatManager->nextSerial(m_owner.lock()), surface->getResource().get(), wl_fixed_from_double(fixedLocal.x), wl_fixed_from_double(fixedLocal.y));
+    m_resource->sendEnter(g_pSeatManager->nextSerial(m_owner.lock(), true), surface->getResource().get(), wl_fixed_from_double(fixedLocal.x), wl_fixed_from_double(fixedLocal.y));
 }
 
 void CWLPointerResource::sendLeave() {
@@ -224,10 +224,10 @@ void CWLPointerResource::sendButton(uint32_t timeMs, uint32_t button, wl_pointer
         return;
 
     if (state == WL_POINTER_BUTTON_STATE_RELEASED && std::ranges::find(m_pressedButtons, button) == m_pressedButtons.end()) {
-        LOGM(Log::ERR, "sendButton release on a non-pressed button");
+        LOG(Log::ERR, "sendButton release on a non-pressed button");
         return;
     } else if (state == WL_POINTER_BUTTON_STATE_PRESSED && std::ranges::find(m_pressedButtons, button) != m_pressedButtons.end()) {
-        LOGM(Log::ERR, "sendButton press on a non-pressed button");
+        LOG(Log::ERR, "sendButton press on a non-pressed button");
         return;
     }
 
@@ -236,7 +236,15 @@ void CWLPointerResource::sendButton(uint32_t timeMs, uint32_t button, wl_pointer
     else if (state == WL_POINTER_BUTTON_STATE_PRESSED)
         m_pressedButtons.emplace_back(button);
 
-    m_resource->sendButton(g_pSeatManager->nextSerial(m_owner.lock()), timeMs, button, state);
+    if (state == WL_POINTER_BUTTON_STATE_RELEASED)
+        g_pSeatManager->clearPointerButtonSerials(m_owner.lock(), m_currentSurface.lock(), button);
+
+    const auto SERIAL = g_pSeatManager->nextSerial(m_owner.lock());
+
+    if (state == WL_POINTER_BUTTON_STATE_PRESSED)
+        g_pSeatManager->recordPointerButtonSerial(m_owner.lock(), SERIAL, m_currentSurface.lock(), button);
+
+    m_resource->sendButton(SERIAL, timeMs, button, state);
 }
 
 void CWLPointerResource::sendAxis(uint32_t timeMs, wl_pointer_axis axis, double value) {
@@ -280,7 +288,9 @@ void CWLPointerResource::sendAxisStop(uint32_t timeMs, wl_pointer_axis axis) {
 }
 
 void CWLPointerResource::sendAxisDiscrete(wl_pointer_axis axis, int32_t discrete) {
-    if (!m_owner || !m_currentSurface || m_resource->version() < 5)
+    // This event is deprecated with wl_pointer version 8 - this event is not
+    // sent to clients supporting version 8 or later.
+    if (!m_owner || !m_currentSurface || m_resource->version() < 5 || m_resource->version() >= 8)
         return;
 
     if (!(PROTO::seat->m_currentCaps & eHIDCapabilityType::HID_INPUT_CAPABILITY_POINTER))
@@ -334,7 +344,7 @@ CWLKeyboardResource::CWLKeyboardResource(SP<CWlKeyboard> resource_, SP<CWLSeatRe
     m_resource->setOnDestroy([this](CWlKeyboard* r) { PROTO::seat->destroyResource(this); });
 
     if (!g_pSeatManager->m_keyboard) {
-        LOGM(Log::ERR, "No keyboard on bound wl_keyboard??");
+        LOG(Log::ERR, "No keyboard on bound wl_keyboard??");
         return;
     }
 
@@ -386,7 +396,7 @@ void CWLKeyboardResource::sendEnter(SP<CWLSurfaceResource> surface, wl_array* ke
         return;
 
     if (m_currentSurface) {
-        LOGM(Log::WARN, "requested CWLKeyboardResource::sendEnter without sendLeave first.");
+        LOG(Log::WARN, "requested CWLKeyboardResource::sendEnter without sendLeave first.");
         sendLeave();
     }
 
@@ -442,6 +452,8 @@ void CWLKeyboardResource::repeatInfo(uint32_t rate, uint32_t delayMs) {
 CWLSeatResource::CWLSeatResource(SP<CWlSeat> resource_) : m_resource(resource_) {
     if UNLIKELY (!good())
         return;
+
+    m_resource->setData(this);
 
     m_resource->setOnDestroy([this](CWlSeat* r) {
         m_events.destroy.emit();
@@ -502,6 +514,18 @@ CWLSeatResource::~CWLSeatResource() {
     m_events.destroy.emit();
 }
 
+SP<CWLSeatResource> CWLSeatResource::fromResource(wl_resource* res) {
+    if (!res)
+        return nullptr;
+
+    const auto WLSEAT = sc<CWlSeat*>(wl_resource_get_user_data(res));
+    if (!WLSEAT)
+        return nullptr;
+
+    auto data = sc<CWLSeatResource*>(WLSEAT->data());
+    return data ? data->m_self.lock() : nullptr;
+}
+
 void CWLSeatResource::sendCapabilities(uint32_t caps) {
     uint32_t wlCaps = 0;
     if (caps & eHIDCapabilityType::HID_INPUT_CAPABILITY_KEYBOARD)
@@ -537,7 +561,7 @@ void CWLSeatProtocol::bindManager(wl_client* client, void* data, uint32_t ver, u
 
     RESOURCE->m_self = RESOURCE;
 
-    LOGM(Log::DEBUG, "New seat resource bound at {:x}", (uintptr_t)RESOURCE.get());
+    LOG(Log::DEBUG, "New seat resource bound at {:x}", (uintptr_t)RESOURCE.get());
 
     m_events.newSeatResource.emit(RESOURCE);
 }

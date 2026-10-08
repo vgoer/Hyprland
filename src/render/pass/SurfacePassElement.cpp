@@ -1,7 +1,7 @@
 #include "SurfacePassElement.hpp"
 #include "../OpenGL.hpp"
 #include "../../desktop/view/WLSurface.hpp"
-#include "../../desktop/view/Window.hpp"
+#include "../../desktop/view/window/Window.hpp"
 #include "../../protocols/core/Compositor.hpp"
 #include "../../protocols/DRMSyncobj.hpp"
 #include "../../managers/input/InputManager.hpp"
@@ -37,13 +37,14 @@ CBox CSurfacePassElement::getTexBox() {
         if (PSURFACE && !PSURFACE->m_fillIgnoreSmall && PSURFACE->small() /* guarantees PWINDOW */) {
             const auto CORRECT  = PSURFACE->correctSmallVec();
             const auto SIZE     = PSURFACE->getViewporterCorrectedSize();
-            const auto REPORTED = PWINDOW->getReportedSize();
+            const auto REPORTED = PWINDOW->backend().reportedSize();
 
             if (!INTERACTIVERESIZEINPROGRESS) {
                 windowBox.translate(CORRECT);
 
-                windowBox.width  = SIZE.x * (PWINDOW->m_realSize->value().x / REPORTED.x);
-                windowBox.height = SIZE.y * (PWINDOW->m_realSize->value().y / REPORTED.y);
+                const auto REALSIZE = PWINDOW->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+                windowBox.width     = SIZE.x * (REALSIZE.x / REPORTED.x);
+                windowBox.height    = SIZE.y * (REALSIZE.y / REPORTED.y);
             } else {
                 windowBox.width  = SIZE.x;
                 windowBox.height = SIZE.y;
@@ -55,12 +56,13 @@ CBox CSurfacePassElement::getTexBox() {
 
         windowBox = {sc<int>(outputX) + m_data.pos.x + m_data.localPos.x, sc<int>(outputY) + m_data.pos.y + m_data.localPos.y, std::max(sc<float>(SURFSIZE.x), 2.F),
                      std::max(sc<float>(SURFSIZE.y), 2.F)};
-        if (m_data.pWindow && m_data.pWindow->m_realSize->isBeingAnimated() && m_data.surface && !m_data.mainSurface && m_data.squishOversized /* subsurface */) {
+        if (m_data.pWindow && m_data.pWindow->sizeAnimation()->isBeingAnimated() && m_data.surface && !m_data.mainSurface && m_data.squishOversized /* subsurface */) {
             // adjust subsurfaces to the window
-            const auto REPORTED = m_data.pWindow->getReportedSize();
+            const auto REPORTED = m_data.pWindow->backend().reportedSize();
             if (REPORTED.x != 0 && REPORTED.y != 0) {
-                windowBox.width  = (windowBox.width / REPORTED.x) * m_data.pWindow->m_realSize->value().x;
-                windowBox.height = (windowBox.height / REPORTED.y) * m_data.pWindow->m_realSize->value().y;
+                const auto REALSIZE = m_data.pWindow->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+                windowBox.width     = (windowBox.width / REPORTED.x) * REALSIZE.x;
+                windowBox.height    = (windowBox.height / REPORTED.y) * REALSIZE.y;
             }
         }
     }
@@ -78,7 +80,7 @@ CBox CSurfacePassElement::getTexBox() {
     return m_cachedTexBox;
 }
 
-bool CSurfacePassElement::needsLiveBlur() {
+bool CSurfacePassElement::needsLiveBlur(Render::CRenderContext& ctx) {
     auto        PSURFACE = Desktop::View::CWLSurface::fromResource(m_data.surface);
 
     const float ALPHA = m_data.alpha * m_data.fadeAlpha * (PSURFACE ? PSURFACE->m_alphaModifier * PSURFACE->m_overallOpacity : 1.F);
@@ -90,12 +92,12 @@ bool CSurfacePassElement::needsLiveBlur() {
     if (m_data.popup)
         return BLUR;
 
-    const bool NEWOPTIM = g_pHyprRenderer->shouldUseNewBlurOptimizations(m_data.pLS, m_data.pWindow);
+    const bool NEWOPTIM = g_pHyprRenderer->shouldUseNewBlurOptimizations(ctx, m_data.pLS, m_data.pWindow);
 
-    return BLUR && !NEWOPTIM;
+    return BLUR && (m_data.blockBlurOptimization || !NEWOPTIM);
 }
 
-bool CSurfacePassElement::needsPrecomputeBlur() {
+bool CSurfacePassElement::needsPrecomputeBlur(Render::CRenderContext& ctx) {
     auto        PSURFACE = Desktop::View::CWLSurface::fromResource(m_data.surface);
 
     const float ALPHA = m_data.alpha * m_data.fadeAlpha * (PSURFACE ? PSURFACE->m_alphaModifier * PSURFACE->m_overallOpacity : 1.F);
@@ -107,16 +109,16 @@ bool CSurfacePassElement::needsPrecomputeBlur() {
     if (m_data.popup)
         return false;
 
-    const bool NEWOPTIM = g_pHyprRenderer->shouldUseNewBlurOptimizations(m_data.pLS, m_data.pWindow);
+    const bool NEWOPTIM = g_pHyprRenderer->shouldUseNewBlurOptimizations(ctx, m_data.pLS, m_data.pWindow);
 
-    return BLUR && NEWOPTIM;
+    return BLUR && NEWOPTIM && !m_data.blockBlurOptimization;
 }
 
-std::optional<CBox> CSurfacePassElement::boundingBox() {
+std::optional<CBox> CSurfacePassElement::boundingBox(Render::CRenderContext& ctx) {
     return getTexBox();
 }
 
-CRegion CSurfacePassElement::opaqueRegion() {
+CRegion CSurfacePassElement::opaqueRegion(Render::CRenderContext& ctx) {
     auto        PSURFACE = Desktop::View::CWLSurface::fromResource(m_data.surface);
 
     const float ALPHA = m_data.alpha * m_data.fadeAlpha * (PSURFACE ? PSURFACE->m_alphaModifier * PSURFACE->m_overallOpacity : 1.F);
@@ -131,10 +133,10 @@ CRegion CSurfacePassElement::opaqueRegion() {
         return opaqueSurf.translate(m_data.pos + m_data.localPos - m_data.pMonitor->m_position).expand(-m_data.rounding);
     }
 
-    return m_data.texture && m_data.texture->m_opaque ? boundingBox()->expand(-m_data.rounding) : CRegion{};
+    return m_data.texture && m_data.texture->m_opaque ? boundingBox(ctx)->expand(-m_data.rounding) : CRegion{};
 }
 
-CRegion CSurfacePassElement::visibleRegion(bool& cancel) {
+CRegion CSurfacePassElement::visibleRegion(Render::CRenderContext& ctx, bool& cancel) {
     auto PSURFACE = Desktop::View::CWLSurface::fromResource(m_data.surface);
     if (!PSURFACE)
         return {};
@@ -155,8 +157,8 @@ CRegion CSurfacePassElement::visibleRegion(bool& cancel) {
     // deal with any rounding errors that might come from scaling
     visibleRegion.expand(1);
 
-    auto uvTL = g_pHyprRenderer->m_renderData.primarySurfaceUVTopLeft;
-    auto uvBR = g_pHyprRenderer->m_renderData.primarySurfaceUVBottomRight;
+    auto uvTL = ctx.m_data.primarySurfaceUVTopLeft;
+    auto uvBR = ctx.m_data.primarySurfaceUVBottomRight;
 
     if (uvTL == Vector2D(-1, -1))
         uvTL = Vector2D(0, 0);
@@ -176,9 +178,9 @@ CRegion CSurfacePassElement::visibleRegion(bool& cancel) {
     return visibleRegion;
 }
 
-void CSurfacePassElement::discard() {
-    if (!g_pHyprRenderer->m_bBlockSurfaceFeedback) {
-        Log::logger->log(Log::TRACE, "discard for invisible surface");
+void CSurfacePassElement::discard(Render::CRenderContext& ctx) {
+    if (!ctx.m_blockSurfaceFeedback) {
+        LOG(Log::TRACE, "discard for invisible surface");
         m_data.surface->presentFeedback(m_data.when, m_data.pMonitor->m_self.lock(), true);
     }
 }

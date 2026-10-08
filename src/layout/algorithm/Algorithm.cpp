@@ -4,10 +4,10 @@
 #include "TiledAlgorithm.hpp"
 #include "../target/WindowTarget.hpp"
 #include "../space/Space.hpp"
-#include "../../desktop/view/Window.hpp"
+#include "../../desktop/view/window/Window.hpp"
 #include "../../desktop/history/WindowHistoryTracker.hpp"
 #include "../../desktop/state/FocusState.hpp"
-#include "../../helpers/Monitor.hpp"
+#include "../../output/Monitor.hpp"
 #include "../../render/Renderer.hpp"
 
 #include "../../debug/log/Logger.hpp"
@@ -56,7 +56,7 @@ void CAlgorithm::removeTarget(SP<ITarget> target) {
         return;
     }
 
-    Log::logger->log(Log::ERR, "BUG THIS: CAlgorithm::removeTarget, but not found");
+    LOG(Log::ERR, "BUG THIS: CAlgorithm::removeTarget, but not found");
 }
 
 void CAlgorithm::moveTarget(SP<ITarget> target, std::optional<Vector2D> focalPoint, bool reposition) {
@@ -104,27 +104,6 @@ size_t CAlgorithm::floatingTargets() const {
 void CAlgorithm::recalculate(eRecalculateReason reason) {
     m_tiled->recalculate(reason);
     m_floating->recalculate(reason);
-
-    const auto PWORKSPACE = m_space->workspace();
-    if (!PWORKSPACE)
-        return;
-
-    const auto PMONITOR = PWORKSPACE->m_monitor;
-
-    if (PWORKSPACE->m_hasFullscreenWindow && PMONITOR) {
-        // massive hack from the fullscreen func
-        const auto PFULLWINDOW = PWORKSPACE->getFullscreenWindow();
-
-        if (PFULLWINDOW) {
-            if (PWORKSPACE->m_fullscreenMode == FSMODE_FULLSCREEN) {
-                *PFULLWINDOW->m_realPosition = PMONITOR->m_position;
-                *PFULLWINDOW->m_realSize     = PMONITOR->m_size;
-            } else if (PWORKSPACE->m_fullscreenMode == FSMODE_MAXIMIZED)
-                PFULLWINDOW->layoutTarget()->setPositionGlobal(m_space->workArea());
-        }
-
-        return;
-    }
 }
 
 void CAlgorithm::recenter(SP<ITarget> t) {
@@ -152,25 +131,6 @@ void CAlgorithm::resizeTarget(const Vector2D& Δ, SP<ITarget> target, eRectCorne
 void CAlgorithm::moveTarget(const Vector2D& Δ, SP<ITarget> target) {
     if (target->floating())
         m_floating->moveTarget(Δ, target);
-}
-
-eFullscreenRequestResult CAlgorithm::requestFullscreen(SP<ITarget> target, eFullscreenMode currentEffectiveMode, eFullscreenMode effectiveMode) {
-    if (!target)
-        return FULLSCREEN_REQUEST_DEFAULT;
-
-    const SFullscreenRequest request = {.target = target, .currentEffectiveMode = currentEffectiveMode, .effectiveMode = effectiveMode};
-    return target->floating() ? m_floating->requestFullscreen(request) : m_tiled->requestFullscreen(request);
-}
-
-SP<ITarget> CAlgorithm::layoutFullscreenTarget() const {
-    if (const auto TARGET = m_tiled->layoutFullscreenTarget(); TARGET)
-        return TARGET;
-
-    return m_floating->layoutFullscreenTarget();
-}
-
-bool CAlgorithm::layoutFullscreenCoversMonitor() const {
-    return m_tiled->layoutFullscreenCoversMonitor() || m_floating->layoutFullscreenCoversMonitor();
 }
 
 void CAlgorithm::swapTargets(SP<ITarget> a, SP<ITarget> b) {
@@ -274,7 +234,7 @@ SP<ITarget> CAlgorithm::getNextCandidate(SP<ITarget> old) {
     if (old->floating() || *FOCUSONCLOSE == 2) {
         // use window history to determine best target
         for (const auto& w : Desktop::History::windowTracker()->fullHistory() | std::views::reverse) {
-            if (!w->m_workspace || w->m_workspace->m_space != m_space || !w->layoutTarget() || !w->layoutTarget()->space())
+            if (!w->m_workspace || w->m_workspace->space() != m_space || !w->layoutTarget() || !w->layoutTarget()->space())
                 continue;
 
             return w->layoutTarget();

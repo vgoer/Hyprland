@@ -2,7 +2,7 @@
 #include "../../render/OpenGL.hpp"
 #include "../../Compositor.hpp"
 #include "../../render/Renderer.hpp"
-#include "../EventManager.hpp"
+#include "../../ipc/s2/S2.hpp"
 #include "../eventLoop/EventLoopManager.hpp"
 #include "../../event/EventBus.hpp"
 
@@ -25,8 +25,14 @@ CScreenshareSession::CScreenshareSession(PHLWINDOW window, wl_client* client) : 
         m_events.constraintsChanged.emit();
     });
     m_listeners.windowMonitorChanged = m_window->m_events.monitorChanged.listen([this]() {
-        m_listeners.monitorDestroyed   = monitor()->m_events.disconnect.listen([this]() { stop(); });
-        m_listeners.monitorModeChanged = monitor()->m_events.modeChanged.listen([this]() {
+        const auto PMONITOR = monitor();
+        if (!PMONITOR) {
+            stop();
+            return;
+        }
+
+        m_listeners.monitorDestroyed   = PMONITOR->m_events.disconnect.listen([this]() { stop(); });
+        m_listeners.monitorModeChanged = PMONITOR->m_events.modeChanged.listen([this]() {
             calculateConstraints();
             m_events.constraintsChanged.emit();
         });
@@ -49,7 +55,7 @@ CScreenshareSession::CScreenshareSession(PHLMONITOR monitor, CBox captureRegion,
 CScreenshareSession::~CScreenshareSession() {
     stop();
     uintptr_t ptr = m_type == SHARE_WINDOW && !m_window.expired() ? (uintptr_t)m_window.get() : (m_monitor.expired() ? (uintptr_t)nullptr : (uintptr_t)m_monitor.get());
-    LOGM(Log::TRACE, "Destroyed screenshare session for ({}): {}, {:x}", m_type, m_name, ptr);
+    LOG(Log::TRACE, "Destroyed screenshare session for ({}): {}, {:x}", m_type, m_name, ptr);
 }
 
 void CScreenshareSession::stop() {
@@ -65,9 +71,19 @@ bool CScreenshareSession::isActive() {
     return !m_stopped;
 }
 
+bool CScreenshareSession::isStale() {
+    return m_stale;
+}
+
 void CScreenshareSession::init() {
+    const auto PMONITOR = monitor();
+    if (!PMONITOR) {
+        stop();
+        return;
+    }
+
     uintptr_t ptr = m_type == SHARE_WINDOW && !m_window.expired() ? (uintptr_t)m_window.get() : (m_monitor.expired() ? (uintptr_t)nullptr : (uintptr_t)m_monitor.get());
-    LOGM(Log::TRACE, "Created screenshare session for ({}): {}, {:x}", m_type, m_name, ptr);
+    LOG(Log::TRACE, "Created screenshare session for ({}): {}, {:x}", m_type, m_name, ptr);
 
     m_shareStopTimer = makeShared<CEventLoopTimer>(
         std::chrono::milliseconds(500),
@@ -82,10 +98,10 @@ void CScreenshareSession::init() {
 
     // scale capture box since it's in logical coords; round to integer pixel
     // dims so m_bufferSize matches the int32 size we send to the client
-    m_captureBox.scale(monitor()->m_scale).round();
+    m_captureBox.scale(PMONITOR->m_scale).round();
 
-    m_listeners.monitorDestroyed   = monitor()->m_events.disconnect.listen([this]() { stop(); });
-    m_listeners.monitorModeChanged = monitor()->m_events.modeChanged.listen([this]() {
+    m_listeners.monitorDestroyed   = PMONITOR->m_events.disconnect.listen([this]() { stop(); });
+    m_listeners.monitorModeChanged = PMONITOR->m_events.modeChanged.listen([this]() {
         calculateConstraints();
         m_events.constraintsChanged.emit();
     });
@@ -113,40 +129,41 @@ void CScreenshareSession::calculateConstraints() {
 
     switch (m_type) {
         case SHARE_MONITOR:
-            m_bufferSize = PMONITOR->m_pixelSize;
+            m_bufferSize = PMONITOR->m_transformedSize;
             m_name       = PMONITOR->m_name;
             break;
         case SHARE_WINDOW:
-            m_bufferSize = (m_window->m_realSize->value() * PMONITOR->m_scale).round();
-            m_name       = m_window->m_title;
+            m_bufferSize = (m_window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT) * PMONITOR->m_scale).round();
+            m_name       = m_window->metadata().title();
             break;
         case SHARE_REGION:
-            m_bufferSize = PMONITOR->m_transform % 2 == 0 ? m_captureBox.size() : Vector2D{m_captureBox.h, m_captureBox.w};
+            m_bufferSize = m_captureBox.size();
             m_name       = PMONITOR->m_name;
             break;
         case SHARE_NONE:
         default:
-            LOGM(Log::ERR, "Invalid share type?? This shouldn't happen");
+            LOG(Log::ERR, "Invalid share type?? This shouldn't happen");
             stop();
             return;
     }
 
-    LOGM(Log::TRACE, "constraints changed for {}", m_name);
+    LOG(Log::TRACE, "constraints changed for {}", m_name);
 }
 
 void CScreenshareSession::screenshareEvents(bool startSharing) {
+    m_stale = !startSharing;
     if (startSharing && !m_sharing) {
         m_sharing = true;
-        g_pEventManager->postEvent(SHyprIPCEvent{.event = "screencast", .data = std::format("1,{}", m_type)});
-        g_pEventManager->postEvent(SHyprIPCEvent{.event = "screencastv2", .data = std::format("1,{},{}", m_type, m_name)});
-        LOGM(Log::INFO, "Started screenshare session for ({}): {}", m_type, m_name);
+        IPC::Socket2::sock()->postEvent({.event = "screencast", .data = std::format("1,{}", m_type)});
+        IPC::Socket2::sock()->postEvent({.event = "screencastv2", .data = std::format("1,{},{}", m_type, m_name)});
+        LOG(Log::INFO, "Started screenshare session for ({}): {}", m_type, m_name);
 
         Event::bus()->m_events.screenshare.state.emit(true, m_type, m_name);
     } else if (!startSharing && m_sharing) {
         m_sharing = false;
-        g_pEventManager->postEvent(SHyprIPCEvent{.event = "screencast", .data = std::format("0,{}", m_type)});
-        g_pEventManager->postEvent(SHyprIPCEvent{.event = "screencastv2", .data = std::format("0,{},{}", m_type, m_name)});
-        LOGM(Log::INFO, "Stopped screenshare session for ({}): {}", m_type, m_name);
+        IPC::Socket2::sock()->postEvent({.event = "screencast", .data = std::format("0,{}", m_type)});
+        IPC::Socket2::sock()->postEvent({.event = "screencastv2", .data = std::format("0,{},{}", m_type, m_name)});
+        LOG(Log::INFO, "Stopped screenshare session for ({}): {}", m_type, m_name);
 
         Event::bus()->m_events.screenshare.state.emit(false, m_type, m_name);
     }
@@ -172,9 +189,6 @@ UP<CScreenshareFrame> CScreenshareSession::nextFrame(bool overlayCursor) {
     frame->m_self               = frame;
 
     Screenshare::mgr()->m_pendingFrames.emplace_back(frame);
-
-    // there is now a pending frame, so block ds
-    g_pHyprRenderer->m_directScanoutBlocked = true;
 
     return frame;
 }

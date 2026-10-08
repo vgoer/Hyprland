@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <vector>
 #include "../helpers/signal/Signal.hpp"
-#include "../helpers/Monitor.hpp"
+#include "../output/Monitor.hpp"
 
 class CExtWorkspaceManagerResource;
 
@@ -58,6 +58,7 @@ class CExtWorkspaceResource {
     void                             sendState();
     void                             sendCapabilities();
     void                             sendGroup();
+    void                             sendCoordinates(bool numbered);
 
     struct {
         bool          activate   = false;
@@ -70,6 +71,7 @@ class CExtWorkspaceResource {
         CHyprSignalListener activeChanged;
         CHyprSignalListener monitorChanged;
         CHyprSignalListener renamed;
+        CHyprSignalListener idChanged;
     } m_listeners;
 
     friend class CExtWorkspaceManagerResource;
@@ -89,6 +91,7 @@ class CExtWorkspaceManagerResource {
     void                                         scheduleDone();
     [[nodiscard]] WP<CExtWorkspaceGroupResource> findGroup(const PHLMONITORREF& monitor) const;
     void                                         sendGroupToWorkspaces(const WP<CExtWorkspaceGroupResource>& group);
+    void                                         sendCoordinatesForGroup(const PHLMONITORREF& monitor, const WP<CExtWorkspaceResource>& excluded = {});
 
     UP<CExtWorkspaceManagerV1>                   m_resource;
 

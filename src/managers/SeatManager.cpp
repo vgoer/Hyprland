@@ -6,18 +6,87 @@
 #include "../protocols/PrimarySelection.hpp"
 #include "../protocols/core/Compositor.hpp"
 #include "../protocols/LayerShell.hpp"
+#include "../protocols/InputCapture.hpp"
+#include "../protocols/PointerConstraints.hpp"
 #include "../Compositor.hpp"
 #include "../desktop/state/FocusState.hpp"
 #include "../devices/IKeyboard.hpp"
 #include "../desktop/view/LayerSurface.hpp"
 #include "../managers/input/InputManager.hpp"
+#include "../state/MonitorState.hpp"
+#include "devices/IHID.hpp"
 #include "wlr-layer-shell-unstable-v1.hpp"
 #include <algorithm>
 #include <hyprutils/utils/ScopeGuard.hpp>
 #include <ranges>
-#include <cstring>
 
 using namespace Hyprutils::Utils;
+
+static bool surfaceInTree(SP<CWLSurfaceResource> root, SP<CWLSurfaceResource> surface) {
+    if (!root || !surface)
+        return false;
+
+    if (root == surface)
+        return true;
+
+    return !!root->findFirstPreorder([surface](SP<CWLSurfaceResource> candidate) { return candidate == surface; });
+}
+
+void CKeyboardEventHandlerStack::push(WP<IKeyboardEventHandler> handler) {
+    if (handler.expired())
+        return;
+
+    std::erase_if(m_handlers, [&handler](const auto& candidate) { return candidate.expired() || candidate == handler; });
+    m_handlers.emplace_back(std::move(handler));
+}
+
+bool CKeyboardEventHandlerStack::remove(WP<IKeyboardEventHandler> handler) {
+    bool removed = false;
+    std::erase_if(m_handlers, [&handler, &removed](const auto& candidate) {
+        if (candidate == handler)
+            removed = true;
+        return candidate.expired() || candidate == handler;
+    });
+    return removed;
+}
+
+bool CKeyboardEventHandlerStack::dispatch(const IKeyboard::SKeyEvent& event, SP<IKeyboard> keyboard, bool allowNewPress) {
+    const auto OWNED = std::ranges::find_if(m_ownedKeys, [&event, &keyboard](const auto& key) { return key.keyboard == keyboard && key.keycode == event.keycode; });
+
+    if (OWNED != m_ownedKeys.end()) {
+        const auto HANDLER = OWNED->handler;
+        if (event.state == WL_KEYBOARD_KEY_STATE_RELEASED)
+            m_ownedKeys.erase(OWNED);
+
+        if (!HANDLER.expired())
+            HANDLER->onKeyboardKey(event, keyboard);
+        return true;
+    }
+
+    if (!allowNewPress || event.state != WL_KEYBOARD_KEY_STATE_PRESSED)
+        return false;
+
+    pruneHandlers();
+    if (m_handlers.empty())
+        return false;
+
+    const auto HANDLER = m_handlers.back();
+    m_ownedKeys.emplace_back(SOwnedKey{
+        .keyboard = keyboard,
+        .keycode  = event.keycode,
+        .handler  = HANDLER,
+    });
+    HANDLER->onKeyboardKey(event, keyboard);
+    return true;
+}
+
+void CKeyboardEventHandlerStack::onKeyboardRemoved(SP<IKeyboard> keyboard) {
+    std::erase_if(m_ownedKeys, [&keyboard](const auto& key) { return key.keyboard.expired() || key.keyboard == keyboard; });
+}
+
+void CKeyboardEventHandlerStack::pruneHandlers() {
+    std::erase_if(m_handlers, [](const auto& handler) { return handler.expired(); });
+}
 
 CSeatManager::CSeatManager() {
     m_listeners.newSeatResource = PROTO::seat->m_events.newSeatResource.listen([this](const auto& resource) { onNewSeatResource(resource); });
@@ -41,7 +110,7 @@ SP<CSeatManager::SSeatResourceContainer> CSeatManager::containerForResource(SP<C
     return nullptr;
 }
 
-uint32_t CSeatManager::nextSerial(SP<CWLSeatResource> seatResource) {
+uint32_t CSeatManager::nextSerial(SP<CWLSeatResource> seatResource, bool enter) {
     if (!seatResource)
         return 0;
 
@@ -51,10 +120,14 @@ uint32_t CSeatManager::nextSerial(SP<CWLSeatResource> seatResource) {
 
     auto serial = wl_display_next_serial(g_pCompositor->m_wlDisplay);
 
-    container->serials.emplace_back(serial);
+    if (enter)
+        container->enterSerial = serial;
+    else {
+        container->serials.emplace_back(serial);
 
-    if (container->serials.size() > MAX_SERIAL_STORE_LEN)
-        container->serials.erase(container->serials.begin());
+        if (container->serials.size() > MAX_SERIAL_STORE_LEN)
+            container->serials.erase(container->serials.begin());
+    }
 
     return serial;
 }
@@ -67,12 +140,66 @@ bool CSeatManager::serialValid(SP<CWLSeatResource> seatResource, uint32_t serial
 
     ASSERT(container);
 
+    if (container->enterSerial == serial)
+        return true;
+
     for (auto it = container->serials.begin(); it != container->serials.end(); ++it) {
         if (*it == serial) {
             if (erase)
                 container->serials.erase(it);
             return true;
         }
+    }
+
+    return false;
+}
+
+void CSeatManager::recordPointerButtonSerial(SP<CWLSeatResource> seatResource, uint32_t serial, SP<CWLSurfaceResource> surface, uint32_t button) {
+    if (!seatResource || !surface || !serial)
+        return;
+
+    auto container = containerForResource(seatResource);
+
+    ASSERT(container);
+
+    container->pointerButtonSerials.emplace_back(SPointerButtonSerial{
+        .serial  = serial,
+        .button  = button,
+        .surface = surface,
+    });
+
+    if (container->pointerButtonSerials.size() > MAX_SERIAL_STORE_LEN)
+        container->pointerButtonSerials.erase(container->pointerButtonSerials.begin());
+}
+
+void CSeatManager::clearPointerButtonSerials(SP<CWLSeatResource> seatResource, SP<CWLSurfaceResource> surface, uint32_t button) {
+    if (!seatResource || !surface)
+        return;
+
+    auto container = containerForResource(seatResource);
+
+    ASSERT(container);
+
+    std::erase_if(container->pointerButtonSerials, [surface, button](const auto& serial) { return serial.button == button && surfaceInTree(surface, serial.surface.lock()); });
+}
+
+bool CSeatManager::pointerButtonSerialValid(SP<CWLSeatResource> seatResource, uint32_t serial, SP<CWLSurfaceResource> surface, bool erase) {
+    if (!seatResource || !surface || !serial)
+        return false;
+
+    auto container = containerForResource(seatResource);
+
+    ASSERT(container);
+
+    for (auto it = container->pointerButtonSerials.begin(); it != container->pointerButtonSerials.end(); ++it) {
+        if (it->serial != serial)
+            continue;
+
+        const bool VALID = surfaceInTree(surface, it->surface.lock());
+        if (erase)
+            container->pointerButtonSerials.erase(it);
+
+        return VALID;
     }
 
     return false;
@@ -107,14 +234,15 @@ void CSeatManager::updateActiveKeyboardData() {
     if (m_keyboard)
         PROTO::seat->updateRepeatInfo(m_keyboard->m_repeatRate, m_keyboard->m_repeatDelay);
     PROTO::seat->updateKeymap();
+    PROTO::inputCapture->updateKeymap();
 }
 
 void CSeatManager::setKeyboardFocus(SP<CWLSurfaceResource> surf) {
     if (m_state.keyboardFocus == surf)
         return;
 
-    if (!m_keyboard) {
-        Log::logger->log(Log::ERR, "BUG THIS: setKeyboardFocus without a valid keyboard set");
+    if (!g_pInputManager->anyHidHasCap(HID_INPUT_CAPABILITY_KEYBOARD)) {
+        LOG(Log::ERR, "BUG THIS: setKeyboardFocus without a valid keyboard capability");
         return;
     }
 
@@ -146,9 +274,11 @@ void CSeatManager::setKeyboardFocus(SP<CWLSurfaceResource> surf) {
     static_assert(std::is_same_v<std::decay_t<decltype(PRESSED)>::value_type, uint32_t>, "Element type different from keycode type uint32_t");
 
     const auto PRESSEDARRSIZE = PRESSED.size() * sizeof(uint32_t);
-    const auto PKEYS          = wl_array_add(&keys, PRESSEDARRSIZE);
-    if (PKEYS)
-        memcpy(PKEYS, PRESSED.data(), PRESSEDARRSIZE);
+    if (PRESSEDARRSIZE > 0) {
+        const auto PKEYS = wl_array_add(&keys, PRESSEDARRSIZE);
+        if (PKEYS)
+            std::ranges::copy(PRESSED, sc<uint32_t*>(PKEYS));
+    }
 
     auto client = surf->client();
     for (auto const& r : m_seatResources | std::views::reverse) {
@@ -161,7 +291,17 @@ void CSeatManager::setKeyboardFocus(SP<CWLSurfaceResource> surf) {
                 continue;
 
             k->sendEnter(surf, &keys);
-            k->sendMods(m_keyboard->m_modifiersState.depressed, m_keyboard->m_modifiersState.latched, m_keyboard->m_modifiersState.locked, m_keyboard->m_modifiersState.group);
+            uint32_t depressed = m_keyboard->m_modifiersState.depressed;
+            uint32_t latched   = m_keyboard->m_modifiersState.latched;
+            uint32_t locked    = m_keyboard->m_modifiersState.locked;
+            for (auto const& kb : g_pInputManager->m_keyboards) {
+                if (!kb->m_enabled || !kb->shareStates() || (kb->isVirtual() && g_pInputManager->shouldIgnoreVirtualKeyboard(kb)))
+                    continue;
+                depressed |= kb->m_modifiersState.depressed;
+                latched |= kb->m_modifiersState.latched;
+                locked |= kb->m_modifiersState.locked;
+            }
+            k->sendMods(depressed, latched, locked, m_keyboard->m_modifiersState.group);
         }
     }
 
@@ -213,18 +353,22 @@ void CSeatManager::setPointerFocus(SP<CWLSurfaceResource> surf, const Vector2D& 
     if (dndActive && surf) {
         if (m_state.dndPointerFocus == surf)
             return;
-        Log::logger->log(Log::DEBUG, "[seatmgr] Refusing pointer focus during an active dnd, but setting dndPointerFocus");
+        LOG(Log::DEBUG, "[seatmgr] Refusing pointer focus during an active dnd, but setting dndPointerFocus");
         m_state.dndPointerFocus = surf;
         m_events.dndPointerFocusChange.emit();
         return;
     }
 
-    if (!m_mouse) {
-        Log::logger->log(Log::ERR, "BUG THIS: setPointerFocus without a valid mouse set");
+    if (!g_pInputManager->anyHidHasCap(HID_INPUT_CAPABILITY_POINTER)) {
+        LOG(Log::ERR, "BUG THIS: setPointerFocus without a valid pointer input");
         return;
     }
 
     m_listeners.pointerSurfaceDestroy.reset();
+
+    const auto OLDSURF = Desktop::View::CWLSurface::fromResource(m_state.pointerFocus.lock());
+    if (OLDSURF && OLDSURF->constraint())
+        OLDSURF->constraint()->deactivate();
 
     for (auto const& p : PROTO::seat->m_pointers) {
         if (!p)
@@ -244,6 +388,10 @@ void CSeatManager::setPointerFocus(SP<CWLSurfaceResource> surf, const Vector2D& 
         m_events.pointerFocusChange.emit();
         return;
     }
+
+    const auto SURF = Desktop::View::CWLSurface::fromResource(surf);
+    if (SURF && SURF->constraint())
+        SURF->constraint()->activate();
 
     m_state.dndPointerFocus = surf;
 
@@ -533,13 +681,13 @@ void CSeatManager::refocusGrab() {
 
 void CSeatManager::onSetCursor(SP<CWLSeatResource> seatResource, uint32_t serial, SP<CWLSurfaceResource> surf, const Vector2D& hotspot) {
     if (!m_state.pointerFocusResource || !seatResource || seatResource->client() != m_state.pointerFocusResource->client()) {
-        Log::logger->log(Log::DEBUG, "[seatmgr] Rejecting a setCursor because the client ain't in focus");
+        LOG(Log::DEBUG, "[seatmgr] Rejecting a setCursor because the client ain't in focus");
         return;
     }
 
     // TODO: fix this. Probably should be done in the CWlPointer as the serial could be lost by us.
     // if (!serialValid(seatResource, serial)) {
-    //     Log::logger->log(Log::DEBUG, "[seatmgr] Rejecting a setCursor because the serial is invalid");
+    //     LOG(Log::DEBUG, "[seatmgr] Rejecting a setCursor because the serial is invalid");
     //     return;
     // }
 
@@ -552,7 +700,7 @@ SP<CWLSeatResource> CSeatManager::seatResourceForClient(wl_client* client) {
 
 void CSeatManager::setCurrentSelection(SP<IDataSource> source) {
     if (source == m_selection.currentSelection) {
-        Log::logger->log(Log::WARN, "[seat] duplicated setCurrentSelection?");
+        LOG(Log::WARN, "[seat] duplicated setCurrentSelection?");
         return;
     }
 
@@ -561,8 +709,11 @@ void CSeatManager::setCurrentSelection(SP<IDataSource> source) {
     if (m_selection.currentSelection)
         m_selection.currentSelection->cancelled();
 
-    if (!source)
+    if (!source) {
         PROTO::data->setSelection(nullptr);
+        PROTO::dataWlr->setSelection(nullptr, false);
+        PROTO::extDataDevice->setSelection(nullptr, false);
+    }
 
     m_selection.currentSelection = source;
 
@@ -578,7 +729,7 @@ void CSeatManager::setCurrentSelection(SP<IDataSource> source) {
 
 void CSeatManager::setCurrentPrimarySelection(SP<IDataSource> source) {
     if (source == m_selection.currentPrimarySelection) {
-        Log::logger->log(Log::WARN, "[seat] duplicated setCurrentPrimarySelection?");
+        LOG(Log::WARN, "[seat] duplicated setCurrentPrimarySelection?");
         return;
     }
 
@@ -587,8 +738,11 @@ void CSeatManager::setCurrentPrimarySelection(SP<IDataSource> source) {
     if (m_selection.currentPrimarySelection)
         m_selection.currentPrimarySelection->cancelled();
 
-    if (!source)
+    if (!source) {
         PROTO::primarySelection->setSelection(nullptr);
+        PROTO::dataWlr->setSelection(nullptr, true);
+        PROTO::extDataDevice->setSelection(nullptr, true);
+    }
 
     m_selection.currentPrimarySelection = source;
 
@@ -646,17 +800,17 @@ void CSeatManager::setGrab(SP<CSeatGrab> grab) {
 
         m_seatGrab.reset();
 
-        if (parentLayer && parentLayer->m_layerSurface->m_current.interactivity != ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE) {
+        if (parentLayer && parentLayer->m_layerSurface->m_current.keyboardInteractivity != ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE) {
             Desktop::focusState()->rawSurfaceFocus(parentLayer->wlSurface()->resource());
         } else {
             static auto PFOLLOWMOUSE = CConfigValue<Config::INTEGER>("input:follow_mouse");
             if (*PFOLLOWMOUSE == 0 || *PFOLLOWMOUSE == 2 || *PFOLLOWMOUSE == 3) {
-                const auto PMONITOR = g_pCompositor->getMonitorFromCursor();
+                const auto PMONITOR = State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run();
 
                 // If this was a popup grab, focus its parent window to maintain context
                 if (validMapped(parentWindow)) {
                     Desktop::focusState()->rawWindowFocus(parentWindow, Desktop::FOCUS_REASON_FFM);
-                    Log::logger->log(Log::DEBUG, "[seatmgr] Refocused popup parent window {} (follow_mouse={})", parentWindow->m_title, *PFOLLOWMOUSE);
+                    LOG(Log::DEBUG, "[seatmgr] Refocused popup parent window {} (follow_mouse={})", parentWindow->metadata().title(), *PFOLLOWMOUSE);
                 } else
                     g_pInputManager->refocusLastWindow(PMONITOR);
             } else
@@ -683,13 +837,17 @@ void CSeatManager::setGrab(SP<CSeatGrab> grab) {
         }
 
         if (!refocus && layer)
-            refocus = layer->m_interactivity == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE;
+            refocus = layer->m_keyboardInteractivity == ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE;
 
         if (refocus) {
             auto candidate = Desktop::focusState()->window();
 
-            if (candidate)
+            if (candidate && candidate->m_workspace && candidate->m_workspace->isVisibleNotCovered())
                 Desktop::focusState()->rawWindowFocus(candidate, Desktop::FOCUS_REASON_FFM);
+            else {
+                const auto PMONITOR = State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run();
+                g_pInputManager->refocusLastWindow(PMONITOR);
+            }
         }
 
         if (oldGrab->m_onEnd)

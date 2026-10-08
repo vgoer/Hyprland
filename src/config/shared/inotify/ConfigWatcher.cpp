@@ -7,7 +7,6 @@
 #include "../../ConfigValue.hpp"
 #include "../../ConfigManager.hpp"
 #include <ranges>
-#include <fcntl.h>
 #include <unistd.h>
 #include <filesystem>
 
@@ -19,17 +18,9 @@ UP<CConfigWatcher>& Config::watcher() {
     return p;
 }
 
-CConfigWatcher::CConfigWatcher() : m_inotifyFd(inotify_init()) {
+CConfigWatcher::CConfigWatcher() : m_inotifyFd(inotify_init1(IN_NONBLOCK | IN_CLOEXEC)) {
     if (!m_inotifyFd.isValid()) {
-        Log::logger->log(Log::ERR, "CConfigWatcher couldn't open an inotify node. Config will not be automatically reloaded");
-        return;
-    }
-
-    // TODO: make CFileDescriptor take F_GETFL, F_SETFL
-    const int FLAGS = fcntl(m_inotifyFd.get(), F_GETFL, 0);
-    if (fcntl(m_inotifyFd.get(), F_SETFL, FLAGS | O_NONBLOCK) < 0) {
-        Log::logger->log(Log::ERR, "CConfigWatcher couldn't non-block inotify node. Config will not be automatically reloaded");
-        m_inotifyFd.reset();
+        LOG(Log::ERR, "CConfigWatcher couldn't open an inotify node. Config will not be automatically reloaded");
         return;
     }
 }
@@ -59,8 +50,14 @@ void CConfigWatcher::setWatchList(const std::vector<std::string>& paths) {
 
     // add new paths
     for (const auto& path : paths) {
+        std::error_code ecDir;
+        const bool      isDirectory   = std::filesystem::is_directory(path, ecDir);
+        const uint32_t  fileMask      = IN_CLOSE_WRITE | IN_DONT_FOLLOW;
+        const uint32_t  directoryMask = fileMask | IN_CREATE | IN_DELETE | IN_MOVED_TO | IN_MOVED_FROM;
+        const uint32_t  mask          = isDirectory ? directoryMask : fileMask;
+
         m_watches.emplace_back(SInotifyWatch{
-            .wd   = inotify_add_watch(m_inotifyFd.get(), path.c_str(), IN_CLOSE_WRITE | IN_DONT_FOLLOW),
+            .wd   = inotify_add_watch(m_inotifyFd.get(), path.c_str(), mask),
             .file = path,
         });
 
@@ -91,19 +88,19 @@ void CConfigWatcher::onInotifyEvent() {
         const auto* ev = rc<const inotify_event*>(buffer.data() + offset);
 
         if (offset + sizeof(inotify_event) > sc<size_t>(bytesRead)) {
-            Log::logger->log(Log::ERR, "CConfigWatcher: malformed inotify event, truncated header");
+            LOG(Log::ERR, "CConfigWatcher: malformed inotify event, truncated header");
             break;
         }
 
         if (offset + sizeof(inotify_event) + ev->len > sc<size_t>(bytesRead)) {
-            Log::logger->log(Log::ERR, "CConfigWatcher: malformed inotify event, truncated name field");
+            LOG(Log::ERR, "CConfigWatcher: malformed inotify event, truncated name field");
             break;
         }
 
         const auto WD = std::ranges::find_if(m_watches, [wd = ev->wd](const auto& e) { return e.wd == wd; });
 
         if (WD == m_watches.end())
-            Log::logger->log(Log::ERR, "CConfigWatcher: got an event for wd {} which we don't have?!", ev->wd);
+            LOG(Log::ERR, "CConfigWatcher: got an event for wd {} which we don't have?!", ev->wd);
         else
             m_watchCallback(SConfigWatchEvent{
                 .file = WD->file,

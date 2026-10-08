@@ -29,11 +29,14 @@ runs:
           hyprcursor \
           jq \
           libc++ \
+          libcanberra \
           libdisplay-info \
           libdrm \
+          libei \
           libepoxy \
           libfontenc \
           libglvnd \
+          libheif \
           libinput \
           libjxl \
           libliftoff \
@@ -54,6 +57,7 @@ runs:
           pkgconf \
           pugixml \
           scdoc \
+          sdbus-cpp \
           seatd \
           systemd \
           tomlplusplus \
@@ -113,7 +117,7 @@ runs:
           xorg-xwayland
 
     - name: Checkout Hyprland
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         submodules: recursive
 

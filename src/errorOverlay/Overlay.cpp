@@ -4,11 +4,12 @@
 #include "../config/shared/animation/AnimationTree.hpp"
 #include "../desktop/state/FocusState.hpp"
 #include "../event/EventBus.hpp"
-#include "../managers/animation/AnimationManager.hpp"
+#include "../animation/AnimationManager.hpp"
 #include "../render/Renderer.hpp"
 #include "../render/pass/BorderPassElement.hpp"
 #include "../render/pass/RectPassElement.hpp"
 #include "../render/pass/TexPassElement.hpp"
+#include "../state/MonitorState.hpp"
 
 #include <algorithm>
 #include <format>
@@ -56,13 +57,14 @@ UP<COverlay>& ErrorOverlay::overlay() {
 }
 
 COverlay::COverlay() {
-    g_pAnimationManager->createAnimation(0.f, m_fadeOpacity, Config::animationTree()->getAnimationPropertyConfig("fadeIn"), AVARDAMAGE_NONE);
+    Animation::mgr()->createAnimation(0.f, m_fadeOpacity, Config::animationTree()->getAnimationPropertyConfig("fadeIn"), AVARDAMAGE_NONE);
 
     static auto P = Event::bus()->m_events.monitor.focused.listen([&](PHLMONITOR mon) {
         if (!m_isCreated)
             return;
 
         g_pHyprRenderer->damageMonitor(Desktop::focusState()->monitor());
+        updateReservedArea(mon);
         m_monitorChanged = true;
     });
 
@@ -90,7 +92,7 @@ void COverlay::queueCreate(std::string message, const Config::CGradientValueData
 }
 
 void COverlay::queueError(std::string err) {
-    queueCreate(err + "\nHyprland may not work correctly.", CHyprColor(1.0, 50.0 / 255.0, 50.0 / 255.0, 1.0));
+    queueCreate(std::format("{}\nHyprland may not work correctly.", err), CHyprColor(1.0, 50.0 / 255.0, 50.0 / 255.0, 1.0));
 }
 
 void COverlay::createQueued() {
@@ -101,12 +103,12 @@ void COverlay::createQueued() {
     m_fadeOpacity->setValueAndWarp(0.f);
     *m_fadeOpacity = 1.f;
 
-    const auto PMONITOR = g_pCompositor->m_monitors.front();
+    const auto PMONITOR = Desktop::focusState()->monitor();
     if (!PMONITOR)
         return;
 
     const float       SCALE    = PMONITOR->m_scale;
-    const int         FONTSIZE = std::clamp(sc<int>(10.f * ((PMONITOR->m_pixelSize.x * SCALE) / 1920.f)), 8, 40);
+    const int         FONTSIZE = std::clamp(sc<int>(10.f * ((PMONITOR->m_transformedSize.x * SCALE) / 1920.f)), 8, 40);
 
     static auto       LINELIMIT    = CConfigValue<Config::INTEGER>("debug:error_limit");
     static auto       BAR_POSITION = CConfigValue<Config::INTEGER>("debug:error_position");
@@ -117,7 +119,7 @@ void COverlay::createQueued() {
 
     m_outerPad = 10.F * SCALE;
 
-    const float barWidth     = std::max<float>(1.F, sc<float>(PMONITOR->m_pixelSize.x) - m_outerPad * 2.F);
+    const float barWidth     = std::max<float>(1.F, sc<float>(PMONITOR->m_transformedSize.x) - m_outerPad * 2.F);
     const float textMaxWidth = std::max<float>(1.F, barWidth - 2.F * (1.F + m_outerPad));
 
     m_textTexture = g_pHyprRenderer->renderText(Hyprgraphics::CTextResource::STextResourceData{
@@ -139,8 +141,8 @@ void COverlay::createQueued() {
 
     m_damageBox = {
         sc<int>(PMONITOR->m_position.x),
-        sc<int>(PMONITOR->m_position.y + (TOPBAR ? 0 : PMONITOR->m_pixelSize.y - (m_lastHeight + m_outerPad * 2.F))),
-        sc<int>(PMONITOR->m_pixelSize.x),
+        sc<int>(PMONITOR->m_position.y + (TOPBAR ? 0 : PMONITOR->m_transformedSize.y - (m_lastHeight + m_outerPad * 2.F))),
+        sc<int>(PMONITOR->m_transformedSize.x),
         sc<int>(m_lastHeight + m_outerPad * 2.F),
     };
 
@@ -152,19 +154,29 @@ void COverlay::createQueued() {
 
     g_pHyprRenderer->damageMonitor(PMONITOR);
 
-    for (const auto& m : g_pCompositor->m_monitors) {
+    updateReservedArea(PMONITOR);
+}
+
+void COverlay::updateReservedArea(PHLMONITOR monitor) {
+    static auto BAR_POSITION = CConfigValue<Config::INTEGER>("debug:error_position");
+
+    const bool  TOPBAR = *BAR_POSITION == 0;
+
+    for (const auto& m : State::monitorState()->monitors()) {
         m->m_reservedArea.resetType(Desktop::RESERVED_DYNAMIC_TYPE_ERROR_BAR);
     }
 
-    const auto RESERVED = (m_lastHeight + m_outerPad) / SCALE;
-    PMONITOR->m_reservedArea.addType(Desktop::RESERVED_DYNAMIC_TYPE_ERROR_BAR, Vector2D{0.0, TOPBAR ? RESERVED : 0.0}, Vector2D{0.0, !TOPBAR ? RESERVED : 0.0});
+    if (monitor) {
+        const auto RESERVED = (m_lastHeight + m_outerPad) / monitor->m_scale;
+        monitor->m_reservedArea.addType(Desktop::RESERVED_DYNAMIC_TYPE_ERROR_BAR, Vector2D{0.0, TOPBAR ? RESERVED : 0.0}, Vector2D{0.0, !TOPBAR ? RESERVED : 0.0});
+    }
 
-    for (const auto& m : g_pCompositor->m_monitors) {
+    for (const auto& m : State::monitorState()->monitors()) {
         g_pHyprRenderer->arrangeLayersForMonitor(m->m_id);
     }
 }
 
-void COverlay::draw() {
+void COverlay::draw(Render::CRenderContext& ctx) {
     if (!m_isCreated || !m_queued.empty()) {
         if (!m_queued.empty())
             createQueued();
@@ -182,10 +194,7 @@ void COverlay::draw() {
                 m_isCreated = false;
                 m_queued    = "";
 
-                for (auto& m : g_pCompositor->m_monitors) {
-                    g_pHyprRenderer->arrangeLayersForMonitor(m->m_id);
-                    m->m_reservedArea.resetType(Desktop::RESERVED_DYNAMIC_TYPE_ERROR_BAR);
-                }
+                updateReservedArea(nullptr);
 
                 return;
             } else {
@@ -195,21 +204,21 @@ void COverlay::draw() {
         }
     }
 
-    const auto PMONITOR = g_pHyprRenderer->m_renderData.pMonitor;
+    const auto PMONITOR = ctx.m_data.pMonitor;
     if (!PMONITOR)
         return;
 
     static auto BAR_POSITION = CConfigValue<Config::INTEGER>("debug:error_position");
     const bool  TOPBAR       = *BAR_POSITION == 0;
 
-    const float barWidth = std::max<float>(1.F, sc<float>(PMONITOR->m_pixelSize.x) - m_outerPad * 2.F);
-    const float barY     = TOPBAR ? m_outerPad : PMONITOR->m_pixelSize.y - m_lastHeight - m_outerPad;
+    const float barWidth = std::max<float>(1.F, sc<float>(PMONITOR->m_transformedSize.x) - m_outerPad * 2.F);
+    const float barY     = TOPBAR ? m_outerPad : PMONITOR->m_transformedSize.y - m_lastHeight - m_outerPad;
     const CBox  barBox   = {m_outerPad, barY, barWidth, m_lastHeight};
 
     m_damageBox.x      = sc<int>(PMONITOR->m_position.x);
-    m_damageBox.width  = sc<int>(PMONITOR->m_pixelSize.x);
+    m_damageBox.width  = sc<int>(PMONITOR->m_transformedSize.x);
     m_damageBox.height = sc<int>(m_lastHeight + m_outerPad * 2.F);
-    m_damageBox.y      = sc<int>(PMONITOR->m_position.y + (TOPBAR ? 0 : PMONITOR->m_pixelSize.y - m_damageBox.height));
+    m_damageBox.y      = sc<int>(PMONITOR->m_position.y + (TOPBAR ? 0 : PMONITOR->m_transformedSize.y - m_damageBox.height));
 
     if (m_fadeOpacity->isBeingAnimated() || m_monitorChanged)
         g_pHyprRenderer->damageBox(m_damageBox);
@@ -222,7 +231,7 @@ void COverlay::draw() {
     bgData.box   = barBox;
     bgData.color = CHyprColor(0.06, 0.06, 0.06, opacity);
     bgData.round = sc<int>(std::round(m_radius));
-    g_pHyprRenderer->m_renderPass.add(makeUnique<CRectPassElement>(std::move(bgData)));
+    ctx.m_pass.add(makeUnique<CRectPassElement>(std::move(bgData)));
 
     CBorderPassElement::SBorderData borderData;
     borderData.box        = barBox;
@@ -231,7 +240,7 @@ void COverlay::draw() {
     borderData.outerRound = sc<int>(std::round(m_radius));
     borderData.borderSize = 2;
     borderData.a          = opacity;
-    g_pHyprRenderer->m_renderPass.add(makeUnique<CBorderPassElement>(std::move(borderData)));
+    ctx.m_pass.add(makeUnique<CBorderPassElement>(std::move(borderData)));
 
     if (m_textTexture) {
         CTexPassElement::SRenderData textData;
@@ -240,7 +249,7 @@ void COverlay::draw() {
         textData.a          = opacity;
         textData.clipRegion = CRegion(barBox.copy().expand(-1));
 
-        g_pHyprRenderer->m_renderPass.add(makeUnique<CTexPassElement>(std::move(textData)));
+        ctx.m_pass.add(makeUnique<CTexPassElement>(std::move(textData)));
     }
 }
 

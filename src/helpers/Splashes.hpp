@@ -29,7 +29,6 @@ namespace NSplashes {
         "\"disabling hyprland logo is a war crime\" - vaxry",
         "some basic startup code",
         "\"I think I am addicted to hyprland\" - mathisbuilder",
-        "\"hyprland is the most important package in the arch repos\" - jacekpoz",
         "Thanks Brodie!",
         "Thanks fufexan!",
         "Thanks raf!",
@@ -60,6 +59,7 @@ namespace NSplashes {
         "Funny animation compositor woo",
         "4 years!",
         "Beauty will save the world", // 4th ricing comp winner - zacoons' choice
+        "Get good", // 5th ricing comp winner - zacoons' choice
         "Configration",
         "RIP hyprlang",
         "better call vaxry",

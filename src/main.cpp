@@ -1,9 +1,10 @@
 #include "defines.hpp"
+#include "helpers/MiscFunctions.hpp"
 #include "debug/log/Logger.hpp"
 #include "Compositor.hpp"
-#include "config/legacy/ConfigManager.hpp"
+#include "config/ConfigManager.hpp"
 #include "init/initHelpers.hpp"
-#include "debug/HyprCtl.hpp"
+#include "ipc/s1/S1.hpp"
 #include "helpers/env/Env.hpp"
 
 #include <csignal>
@@ -37,7 +38,8 @@ static void help() {
     --i-am-really-stupid         - Omits root user privileges check (why would you do that?)
     --verify-config              - Do not run Hyprland, only print if the config has any errors
     --version           -v       - Print this binary's version
-    --version-json               - Print this binary's version as json)#");
+    --version-json               - Print this binary's version as json
+    --locked-cmd [COMMAND]       - Launches locker on startup via the provided command)#");
 }
 
 static void reapZombieChildrenAutomatically() {
@@ -53,9 +55,6 @@ static void reapZombieChildrenAutomatically() {
 
 int main(int argc, char** argv) {
 
-    if (!getenv("XDG_RUNTIME_DIR"))
-        throwError("XDG_RUNTIME_DIR is not set!");
-
     // export HYPRLAND_CMD
     std::string cmd = argv[0];
     for (int i = 1; i < argc; ++i)
@@ -70,8 +69,9 @@ int main(int argc, char** argv) {
     // parse some args
     std::string configPath;
     std::string socketName;
+    std::string startLockedCommand;
     int         socketFd   = -1;
-    bool        ignoreSudo = false, verifyConfig = false, safeMode = false;
+    bool        ignoreSudo = false, verifyConfig = false, safeMode = false, startLocked = false;
     int         watchdogFd = -1;
 
     if (argc > 1) {
@@ -137,7 +137,7 @@ int main(int argc, char** argv) {
                     return 1;
                 }
 
-                Log::logger->log(Log::DEBUG, "User-specified config location: '{}'", configPath);
+                LOG(Log::DEBUG, "User-specified config location: '{}'", configPath);
 
                 it++;
 
@@ -147,13 +147,13 @@ int main(int argc, char** argv) {
 
                 return 0;
             } else if (value == "-v" || value == "--version") {
-                std::println("{}", versionRequest(eHyprCtlOutputFormat::FORMAT_NORMAL, ""));
+                std::println("{}", IPC::Socket1::version(IPC::Socket1::eOutputFormat::FORMAT_NORMAL));
                 return 0;
             } else if (value == "--version-json") {
-                std::println("{}", versionRequest(eHyprCtlOutputFormat::FORMAT_JSON, ""));
+                std::println("{}", IPC::Socket1::version(IPC::Socket1::eOutputFormat::FORMAT_JSON));
                 return 0;
             } else if (value == "--systeminfo") {
-                std::println("{}", systemInfoRequest(eHyprCtlOutputFormat::FORMAT_NORMAL, ""));
+                std::println("{}", IPC::Socket1::systemInfo(IPC::Socket1::eOutputFormat::FORMAT_NORMAL));
                 return 0;
             } else if (value == "--verify-config") {
                 verifyConfig = true;
@@ -176,6 +176,20 @@ int main(int argc, char** argv) {
                     help();
                     return 1;
                 }
+            } else if (value == "--locked-cmd") {
+                if (std::next(it) == args.end()) {
+                    help();
+                    return 1;
+                }
+
+                startLocked        = true;
+                startLockedCommand = *std::next(it);
+                it++;
+
+                continue;
+            } else if (value == "--locked") {
+                startLocked = true;
+                continue;
             } else {
                 std::println(stderr, "[ ERROR ] Unknown option '{}' !", value);
                 help();
@@ -183,6 +197,11 @@ int main(int argc, char** argv) {
                 return 1;
             }
         }
+    }
+
+    if (auto env = getenv("XDG_RUNTIME_DIR"); !env || env[0] == '\0') {
+        std::println(stderr, "[ ERROR ] XDG_RUNTIME_DIR is not set. Make sure you're running on a real, properly set up user.");
+        return 1;
     }
 
     if (!ignoreSudo && NInit::isSudo()) {
@@ -205,38 +224,40 @@ int main(int argc, char** argv) {
     if (!verifyConfig) {
         std::println("Welcome to Hyprland!");
         std::println(R"#(
-                                                  
-                     YY    UJ                     
-                    YYY    UUJ                    
-                   XXXY    UUUU                   
-                  zXXXX    UUUUU                  
-                zzzzX        UUUUJ                
-               cczzz          UUUUJ               
-             vccccz            UUUUUJ             
-            vvcccc              UUUUUJ            
-           vvvvv                  UUUUJ           
-          uuuvv                    UUUUJ          
-         uuuuu                      UUUUU         
-        nnnuu                        UUUUU        
-       nnnnn                          YUUUU       
-       xxnn                            YUUU       
-       xxxn                            YYUU       
-      xxxx                              YYUU      
-      rxxx                              YYYY      
-      rrrx                              YYYY      
-       rrrx                            XXXY       
-       rrrr                            XXXX       
-        rrrr                          zzXX        
-         rrrr                        zzzz         
-          rrrrr                    ccczz          
-           rrrrrx                vccccc           
-             rrrrxxxx        uuvvvvvc             
-                rrxxxxxxnnnnuuuuuv                
-                    xxxxxnnnnu                    
+
+                     YY    UJ
+                    YYY    UUJ
+                   XXXY    UUUU
+                  zXXXX    UUUUU
+                zzzzX        UUUUJ
+               cczzz          UUUUJ
+             vccccz            UUUUUJ
+            vvcccc              UUUUUJ
+           vvvvv                  UUUUJ
+          uuuvv                    UUUUJ
+         uuuuu                      UUUUU
+        nnnuu                        UUUUU
+       nnnnn                          YUUUU
+       xxnn                            YUUU
+       xxxn                            YYUU
+      xxxx                              YYUU
+      rxxx                              YYYY
+      rrrx                              YYYY
+       rrrx                            XXXY
+       rrrr                            XXXX
+        rrrr                          zzXX
+         rrrr                        zzzz
+          rrrrr                    ccczz
+           rrrrrx                vccccc
+             rrrrxxxx        uuvvvvvc
+                rrxxxxxxnnnnuuuuuv
+                    xxxxxnnnnu
 
 
 )#");
     }
+
+    NInit::lowerAmbientCaps();
 
     // let's init the compositor.
     // it initializes basic Wayland stuff in the constructor.
@@ -257,18 +278,23 @@ int main(int argc, char** argv) {
     if (safeMode)
         g_pCompositor->m_safeMode = true;
 
+    if (startLocked) {
+        g_pCompositor->m_startLocked        = true;
+        g_pCompositor->m_startLockedCommand = startLockedCommand;
+    }
+
     if (!watchdogOk && !verifyConfig)
-        Log::logger->log(Log::WARN, "WARNING: Hyprland is being launched without start-hyprland. This is highly advised against.");
+        LOG(Log::WARN, "WARNING: Hyprland is being launched without start-hyprland. This is highly advised against.");
 
     g_pCompositor->initServer(socketName, socketFd);
 
-    if (verifyConfig)
-        return !Config::mgr()->configVerifPassed();
+    if (verifyConfig) {
+        const auto verify = Config::mgr()->configVerifPassed();
+        Config::mgr().reset();
+        return !verify;
+    }
 
-    if (!Env::envEnabled("HYPRLAND_NO_RT"))
-        NInit::gainRealTime();
-
-    Log::logger->log(Log::DEBUG, "Hyprland init finished.");
+    LOG(Log::DEBUG, "Hyprland init finished.");
 
     // If all's good to go, start.
     g_pCompositor->startCompositor();
@@ -277,7 +303,7 @@ int main(int argc, char** argv) {
 
     g_pCompositor.reset();
 
-    Log::logger->log(Log::DEBUG, "Hyprland has reached the end.");
+    LOG(Log::DEBUG, "Hyprland has reached the end.");
 
     return EXIT_SUCCESS;
 }
